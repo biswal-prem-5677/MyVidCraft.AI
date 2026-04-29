@@ -7,7 +7,9 @@ from celery import chain
 from celery.exceptions import CeleryError
 from sqlmodel import Session
 
-from apps.api.artifact_store import write_json
+from pathlib import Path
+
+from apps.api.artifact_store import run_dir, write_json
 from apps.api.db import engine
 from apps.api.models import Artifact, Project, Run
 from packages.core.zentcast_core.schemas import ArtifactType, DialogueMode, RunStatus
@@ -16,6 +18,8 @@ from .celery_app import celery_app
 from .phase1_brain import generate_strategy
 from .phase1_script import generate_dialogue, generate_episode_plan
 from .progress import publish
+from workers.media.audio.stitch import stitch_turns_to_episode
+from workers.media.tts.pyttsx3_tts import text_to_wav
 
 
 def _session() -> Session:
@@ -112,6 +116,63 @@ def script_generate_dialogue_json(run_id: str):
     return run_id
 
 
+@celery_app.task(name="phase2.tts_generate_turn_audio")
+def tts_generate_turn_audio(run_id: str):
+    publish(run_id, {"type": "stage.started", "stage": "tts_generate_turn_audio"})
+    _update_run(run_id, stage="tts_generate_turn_audio", progress=0.80)
+
+    # Load turns from artifact file on disk.
+    with _session() as s:
+        run = s.get(Run, run_id)
+        if not run or run.status == RunStatus.cancelled.value:
+            return run_id
+
+    turns_path = run_dir(run_id) / "dialogue_turns.json"
+    turns = json.loads(turns_path.read_text(encoding="utf-8"))
+
+    out_paths: list[str] = []
+    for i, t in enumerate(turns):
+        speaker = t.get("speaker", "Speaker")
+        text = t.get("text", "")
+        wav_path = run_dir(run_id) / "turns" / f"turn_{i:04d}_{speaker.lower()}.wav"
+        text_to_wav(text=text, out_path=str(wav_path), rate=175, voice_hint=None)
+        out_paths.append(str(wav_path).replace("\\", "/"))
+
+    # Store a manifest for stitching.
+    manifest_path = write_json(run_id, "turns/manifest.json", {"turn_wavs": out_paths})
+    _create_artifact(run_id, ArtifactType.turn_audio_wav.value, manifest_path, metadata={"turn_count": len(out_paths)})
+    publish(run_id, {"type": "artifact.created", "artifact_type": "turn_audio_wav", "path": manifest_path})
+
+    publish(run_id, {"type": "stage.completed", "stage": "tts_generate_turn_audio"})
+    _update_run(run_id, progress=0.88)
+    return run_id
+
+
+@celery_app.task(name="phase2.audio_stitch_master")
+def audio_stitch_master(run_id: str):
+    publish(run_id, {"type": "stage.started", "stage": "audio_stitch_master"})
+    _update_run(run_id, stage="audio_stitch_master", progress=0.92)
+
+    turns_path = run_dir(run_id) / "dialogue_turns.json"
+    turns = json.loads(turns_path.read_text(encoding="utf-8"))
+
+    manifest = json.loads((run_dir(run_id) / "turns" / "manifest.json").read_text(encoding="utf-8"))
+    turn_wavs: list[str] = manifest["turn_wavs"]
+
+    pauses_before = [int(t.get("pause_before_ms", 0)) for t in turns]
+    pauses_after = [int(t.get("pause_after_ms", 400)) for t in turns]
+
+    episode_wav = run_dir(run_id) / "episode.wav"
+    stitch_turns_to_episode(turn_wavs, pauses_before, pauses_after, str(episode_wav))
+    wav_path = str(episode_wav).replace("\\", "/")
+    _create_artifact(run_id, ArtifactType.episode_audio_wav.value, wav_path)
+    publish(run_id, {"type": "artifact.created", "artifact_type": "episode_audio_wav", "path": wav_path})
+
+    publish(run_id, {"type": "stage.completed", "stage": "audio_stitch_master"})
+    _update_run(run_id, progress=0.98)
+    return run_id
+
+
 @celery_app.task(name="phase1.mark_completed")
 def mark_completed(run_id: str):
     _update_run(
@@ -147,6 +208,8 @@ def start_phase1_pipeline(run_id: str):
         mark_running.s(run_id),
         brain_generate_strategy.s(),
         script_generate_dialogue_json.s(),
+        tts_generate_turn_audio.s(),
+        audio_stitch_master.s(),
         mark_completed.s(),
     ).apply_async(link_error=mark_failed.s(run_id))
     return run_id
@@ -161,6 +224,8 @@ def run_phase1_pipeline_local(run_id: str) -> str:
         mark_running(run_id)
         brain_generate_strategy(run_id)
         script_generate_dialogue_json(run_id)
+        tts_generate_turn_audio(run_id)
+        audio_stitch_master(run_id)
         mark_completed(run_id)
     except Exception as e:
         _update_run(

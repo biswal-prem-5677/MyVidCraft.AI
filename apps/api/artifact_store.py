@@ -23,6 +23,13 @@ def write_json(run_id: str, filename: str, payload: Any) -> str:
     return str(p).replace("\\", "/")
 
 
+def write_bytes(run_id: str, filename: str, payload: bytes) -> str:
+    p = run_dir(run_id) / filename
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(payload)
+    return str(p).replace("\\", "/")
+
+
 def ensure_data_dirs() -> None:
     os.makedirs(settings.artifacts_dir, exist_ok=True)
 

@@ -116,6 +116,9 @@ class ArtifactType(str, Enum):
     episode_plan = "episode_plan"
     dialogue = "dialogue"
     run_config = "run_config"
+    turn_audio_wav = "turn_audio_wav"
+    episode_audio_wav = "episode_audio_wav"
+    episode_audio_mp3 = "episode_audio_mp3"
 
 
 class ArtifactOut(BaseModel):

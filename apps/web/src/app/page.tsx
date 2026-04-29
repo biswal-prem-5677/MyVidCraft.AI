@@ -216,6 +216,16 @@ export default function HomePage() {
                   <div style={{ height: 8 }} />
                   <div className="subtitle mono">{a.path}</div>
                   <div style={{ height: 10 }} />
+                  {a.path.endsWith(".wav") || a.path.endsWith(".mp3") ? (
+                    <>
+                      <audio
+                        controls
+                        style={{ width: "100%" }}
+                        src={`${API_BASE}/artifacts/${a.id}/file`}
+                      />
+                      <div style={{ height: 10 }} />
+                    </>
+                  ) : null}
                   <button className="btn2" onClick={() => loadArtifactJson(a)}>
                     Show details
                   </button>

@@ -9,6 +9,7 @@ from pathlib import Path
 import anyio
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
 from packages.core.zentcast_core.schemas import (
@@ -147,6 +148,28 @@ def read_artifact_json(artifact_id: str, session: Session = Depends(get_session)
         return json.loads(target.read_text(encoding="utf-8"))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Artifact is not valid JSON: {e}") from e
+
+
+@app.get("/artifacts/{artifact_id}/file")
+def download_artifact_file(artifact_id: str, session: Session = Depends(get_session)):
+    a = session.get(Artifact, artifact_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+
+    base = Path(settings.artifacts_dir).resolve()
+    target = Path(a.path).resolve()
+    if base not in target.parents and base != target:
+        raise HTTPException(status_code=400, detail="Artifact path outside artifacts dir")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Artifact file missing on disk")
+
+    suffix = target.suffix.lower()
+    media = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".json": "application/json",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(path=str(target), media_type=media, filename=target.name)
 
 
 @app.post("/runs/{run_id}/cancel", response_model=RunOut)

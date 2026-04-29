@@ -44,7 +44,7 @@ Rule for this project: **each phase must end with a working vertical slice** and
 
 - **Status**
   - [ ] Not started
-  - [ ] In progress
+  - [x] In progress
   - [ ] Completed
 - **Objective**: Deterministically convert dialogue JSON into mastered episode audio.
 - **What gets built**

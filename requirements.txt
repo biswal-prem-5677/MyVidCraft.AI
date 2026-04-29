@@ -6,4 +6,5 @@ sqlmodel>=0.0.22
 celery>=5.4.0
 redis>=5.0.0
 python-multipart>=0.0.9
+pyttsx3>=2.90
 
