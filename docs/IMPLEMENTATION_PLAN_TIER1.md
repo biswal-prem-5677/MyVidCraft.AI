@@ -23,11 +23,11 @@ Rule for this project: **each phase must end with a working vertical slice** and
 - **Status**
   - [ ] Not started
   - [ ] In progress
-  - [ ] Completed
+  - [x] Completed
 - **Objective**: Stable async SaaS/API base + “Autonomous Content Brain → multi-agent dialogue JSON” end-to-end.
 - **What gets built**
   - FastAPI: `projects`, `runs`, artifacts registry, run cancellation
-  - Celery+Redis: staged task graph + retries + progress events
+  - Celery+Redis: staged task graph + retries + progress events (**dev fallback supported when Redis is unavailable**)
   - Content Brain v1: `StrategyPack` (calendar/topics/hooks + baseline viral score features)
   - Script engine: schema-validated `EpisodePlan` + `DialogueTurn[]` JSON
   - Next.js UI: create run → view progress → view strategy + script artifacts
