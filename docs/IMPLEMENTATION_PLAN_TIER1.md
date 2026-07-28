@@ -156,7 +156,7 @@ Rule for this project: **each phase must end with a working vertical slice** and
 ## Repo layout (recommended)
 
 ```
-zentcast-ai/
+MyVidCraft.ai/
   apps/
     web/                 # Next.js + shadcn UI
     api/                 # FastAPI (REST + websockets)

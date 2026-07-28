@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from packages.core.zentcast_core.schemas import (
+from packages.core.myvidcraft_core.schemas import (
     CharacterProfile,
     DialogueMode,
     DialogueTurn,

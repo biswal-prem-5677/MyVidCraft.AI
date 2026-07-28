@@ -1,4 +1,4 @@
-# zentcast-ai
+# MyVidCraft.ai
 
 Tier‑1 Autonomous AI Media Engine.
 
@@ -19,7 +19,7 @@ Working vertical slice:
 ### Setup
 
 ```powershell
-cd "c:\เอกสาร\zentcast-ai"
+cd "c:\เอกสาร\MyVidCraft.ai"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -30,19 +30,19 @@ pip install -r requirements.txt
 If you already have Redis running, skip this. Otherwise run via Docker:
 
 ```powershell
-docker run --name zentcast-redis -p 6379:6379 -d redis:7
+docker run --name myvidcraft-redis -p 6379:6379 -d redis:7
 ```
 
 ### Start worker + API
 
 ```powershell
 # terminal 1
-cd "c:\เอกสาร\zentcast-ai"
+cd "c:\เอกสาร\MyVidCraft.ai"
 .\.venv\Scripts\Activate.ps1
 celery -A workers.orchestrator.celery_app worker -l info
 
 # terminal 2
-cd "c:\เอกสาร\zentcast-ai"
+cd "c:\เอกสาร\MyVidCraft.ai"
 .\.venv\Scripts\Activate.ps1
 uvicorn apps.api.main:app --reload --port 8000
 ```
@@ -51,7 +51,7 @@ uvicorn apps.api.main:app --reload --port 8000
 
 ```powershell
 # terminal 3
-cd "c:\เอกสาร\zentcast-ai\apps\web"
+cd "c:\เอกสาร\MyVidCraft.ai\apps\web"
 npm install
 $env:NEXT_PUBLIC_API_BASE="http://localhost:8000"
 npm run dev

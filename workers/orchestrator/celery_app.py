@@ -4,7 +4,7 @@ from celery import Celery
 
 
 celery_app = Celery(
-    "zentcast_orchestrator",
+    "myvidcraft_orchestrator",
     broker="redis://localhost:6379/0",
     backend="redis://localhost:6379/0",
     include=["workers.orchestrator.tasks"],

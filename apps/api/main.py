@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 
-from packages.core.zentcast_core.schemas import (
+from packages.core.myvidcraft_core.schemas import (
     ArtifactOut,
     ProjectCreate,
     ProjectOut,
@@ -27,7 +27,7 @@ from .realtime import subscribe_run_events
 from .settings import settings
 
 
-app = FastAPI(title="zentcast-ai API (Phase 1)", version="0.1.0")
+app = FastAPI(title="MyVidCraft.ai API (Phase 1)", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,

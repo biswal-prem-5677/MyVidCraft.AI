@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import date, timedelta
 
-from packages.core.zentcast_core.schemas import ContentCalendarItem, Platform, StrategyPack
+from packages.core.myvidcraft_core.schemas import ContentCalendarItem, Platform, StrategyPack
 
 
 def _stable_float_0_1(seed: str) -> float:

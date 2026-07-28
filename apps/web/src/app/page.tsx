@@ -17,7 +17,7 @@ function safeJsonParse(input: string): unknown {
 }
 
 export default function HomePage() {
-  const [projectName, setProjectName] = useState("Zentcast Phase1");
+  const [projectName, setProjectName] = useState("MyVidCraft Phase1");
   const [niche, setNiche] = useState("AI productivity");
   const [mode, setMode] = useState("teaching");
   const [brandProfileText, setBrandProfileText] = useState(
@@ -126,7 +126,7 @@ export default function HomePage() {
     <div className="container">
       <div className="header">
         <div>
-          <div className="title">zentcast-ai — Phase 1</div>
+          <div className="title">MyVidCraft.ai — Phase 1</div>
           <div className="subtitle">Content Brain → StrategyPack + multi-agent Dialogue JSON (async runs + artifacts)</div>
         </div>
         <div className="pill mono">

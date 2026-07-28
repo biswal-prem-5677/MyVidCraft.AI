@@ -12,7 +12,7 @@ from pathlib import Path
 from apps.api.artifact_store import run_dir, write_json
 from apps.api.db import engine
 from apps.api.models import Artifact, Project, Run
-from packages.core.zentcast_core.schemas import ArtifactType, DialogueMode, RunStatus
+from packages.core.myvidcraft_core.schemas import ArtifactType, DialogueMode, RunStatus
 
 from .celery_app import celery_app
 from .phase1_brain import generate_strategy
