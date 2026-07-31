@@ -619,10 +619,11 @@ Reliability:
 - [x] Start a run in < 2 seconds (async kickoff) — the broker is TCP-probed before enqueue, so an unreachable Redis fails over to in-process execution instantly instead of blocking on the kombu retry budget
 - [x] Script JSON validates (100% of runs) — schema-enforced, with a deterministic template fallback when no LLM key is configured
 - [x] Audio generated and playable — per-turn WAVs + mastered `episode.wav` (`episode.mp3` when FFmpeg is present)
-- [~] Video render completes with lip sync — the render completes and is watchable
-  (`episode.mp4` + burned captions + `captions.srt`), but it is a turn-aware composed
-  cut, **not** lip sync. MuseTalk/LivePortrait are deferred behind the `VideoRenderer`
-  seam; this box is not honestly checkable until one is registered.
+- [~] Video render completes with lip sync — the render completes and is watchable,
+  and is **verified end to end**: a 60s episode muxes to h264 1280x720 @ 25fps + aac
+  with a duration matching the audio exactly (~10s to render and mux). But it is a
+  turn-aware composed cut, **not** lip sync. MuseTalk/LivePortrait are deferred behind
+  the `VideoRenderer` seam; this box is not honestly checkable until one is registered.
 - [ ] At least 3 clips exported with captions
 - [x] Artifact URLs stable and downloadable — `/artifacts/{id}/file`, path-guarded to the artifacts dir
 - [ ] Basic metrics captured per stage — the `metrics` table is still unbuilt; stage timing is only visible as progress events

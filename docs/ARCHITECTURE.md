@@ -222,3 +222,12 @@ Tracked here so they are not rediscovered:
 - **Viral score is a hash, not a model.** `_stable_float_0_1` in `brain.py` is
   deterministic but carries no signal on the template path. Real feature
   extraction is Phase 4.
+- **Next.js carries unpatched advisories, and cannot currently be fixed.** The
+  vulnerable range is `9.3.4-canary.0 - 16.3.0-preview.7`, which covers *every*
+  stable release including the latest 16.x — the fix exists only in a preview.
+  `npm audit fix --force` "resolves" this by proposing next@9.3.3, a version that
+  predates the range and would undo four major versions; do not run it. We track
+  the latest stable 15.x instead. Most of the advisories (SSRF via rewrites,
+  image-optimizer DoS, middleware bypass, cache poisoning) need a deployed public
+  server, and this UI is a localhost dev client, so the practical exposure is low.
+  Revisit when 16.3.0 goes stable.
