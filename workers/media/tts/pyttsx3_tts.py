@@ -1,6 +1,10 @@
 """
 Offline TTS via the local system speech engine (Windows SAPI through pyttsx3).
 
+The default `SpeechEngine` implementation: free, offline, and present on every
+Windows box, which is why Phase 2 shipped against it. Resolve it through
+`workers.media.tts.registry.get_engine()` rather than importing it directly.
+
 Two reliability details this module exists to handle:
 
 1. **COM initialisation.** SAPI is a COM API and must be initialised per thread.
@@ -18,14 +22,15 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
-from .voices import DEFAULT_RATE, SystemVoice
+from .base import Voice
+from .voices import DEFAULT_RATE
 
 log = logging.getLogger(__name__)
 
 # SAPI is a single shared engine; never synthesise from two threads at once.
 _synth_lock = threading.Lock()
 
-_voices_cache: list[SystemVoice] | None = None
+_voices_cache: list[Voice] | None = None
 _voices_lock = threading.Lock()
 
 
@@ -55,7 +60,7 @@ def _com_context():
                 pass
 
 
-def list_system_voices(refresh: bool = False) -> list[SystemVoice]:
+def list_system_voices(refresh: bool = False) -> list[Voice]:
     """Enumerate installed system voices. Cached; returns [] if unavailable."""
     global _voices_cache
     if _voices_cache is not None and not refresh:
@@ -64,7 +69,7 @@ def list_system_voices(refresh: bool = False) -> list[SystemVoice]:
     with _voices_lock:
         if _voices_cache is not None and not refresh:
             return _voices_cache
-        found: list[SystemVoice] = []
+        found: list[Voice] = []
         try:
             import pyttsx3
 
@@ -75,7 +80,7 @@ def list_system_voices(refresh: bool = False) -> list[SystemVoice]:
                         vid = getattr(v, "id", "") or ""
                         name = getattr(v, "name", "") or vid
                         if vid:
-                            found.append(SystemVoice(id=vid, name=name))
+                            found.append(Voice(id=vid, name=name))
                 finally:
                     try:
                         engine.stop()
@@ -121,3 +126,21 @@ def text_to_wav(
                 engine.stop()
             except Exception:
                 pass
+
+
+class Pyttsx3Engine:
+    """`SpeechEngine` over the local system speech engine.
+
+    A thin adapter over the module functions above, which hold the COM and
+    locking behaviour. Stateless — the caches and locks are module scoped
+    because the underlying engine is a process-wide resource, not a per-instance
+    one.
+    """
+
+    name = "pyttsx3"
+
+    def list_voices(self) -> list[Voice]:
+        return list_system_voices()
+
+    def synthesize(self, text: str, out_path: str, *, rate: int = DEFAULT_RATE, voice_id: str | None = None) -> None:
+        text_to_wav(text=text, out_path=out_path, rate=rate, voice_id=voice_id)

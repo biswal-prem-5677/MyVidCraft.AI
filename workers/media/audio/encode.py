@@ -13,22 +13,19 @@ keeps a machine without FFmpeg (like a fresh dev box) from failing every job.
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 from pathlib import Path
+
+# Re-exported: FFmpeg discovery is shared with the video stage and lives in
+# `workers.media.ffmpeg`, but these names were imported from here first.
+from ..ffmpeg import ffmpeg_available, ffmpeg_path
+
+__all__ = ["DEFAULT_BITRATE", "ffmpeg_available", "ffmpeg_path", "wav_to_mp3"]
 
 log = logging.getLogger(__name__)
 
 DEFAULT_BITRATE = "192k"
 _ENCODE_TIMEOUT_S = 300
-
-
-def ffmpeg_path() -> str | None:
-    return shutil.which("ffmpeg")
-
-
-def ffmpeg_available() -> bool:
-    return ffmpeg_path() is not None
 
 
 def wav_to_mp3(wav_path: str, mp3_path: str, bitrate: str = DEFAULT_BITRATE) -> bool:

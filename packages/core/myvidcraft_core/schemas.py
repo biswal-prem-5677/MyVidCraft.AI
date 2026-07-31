@@ -109,7 +109,22 @@ class VoiceRerunCreate(BaseModel):
     voice_overrides: dict[str, str] = Field(default_factory=dict)
 
 
-class SystemVoiceOut(BaseModel):
+class VideoRerunCreate(BaseModel):
+    """
+    Body for a video-only re-render.
+
+    The compositor is the cheapest stage to iterate on and the one whose output
+    is most a matter of taste, so its look is adjustable without paying for
+    another TTS pass.
+    """
+
+    captions: bool = True
+    show_broll_slots: bool = True
+
+
+class VoiceOut(BaseModel):
+    """A voice the active speech engine can render with."""
+
     id: str
     name: str
 
@@ -131,6 +146,13 @@ class ArtifactType(str, Enum):
     turn_audio_manifest = "turn_audio_manifest"
     episode_audio_wav = "episode_audio_wav"
     episode_audio_mp3 = "episode_audio_mp3"
+    # Where each turn's speech lands in the mastered episode. Produced by the
+    # audio stage because the stitcher is what knows the real frame offsets;
+    # consumed by the compositor now and by the clip engine in Phase 4.
+    episode_timeline = "episode_timeline"
+    episode_video_mp4 = "episode_video_mp4"
+    episode_captions_srt = "episode_captions_srt"
+    video_storyboard = "video_storyboard"
 
 
 class ArtifactOut(BaseModel):

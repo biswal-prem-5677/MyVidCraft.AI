@@ -1,15 +1,15 @@
+from workers.media.tts.base import Voice
 from workers.media.tts.voices import (
     DEFAULT_RATE,
     MAX_RATE,
     MIN_RATE,
-    SystemVoice,
     assign_voices,
     pace_to_rate,
 )
 
-DAVID = SystemVoice(id="TTS_MS_EN-US_DAVID_11.0", name="Microsoft David Desktop")
-ZIRA = SystemVoice(id="TTS_MS_EN-US_ZIRA_11.0", name="Microsoft Zira Desktop")
-HAZEL = SystemVoice(id="TTS_MS_EN-GB_HAZEL_11.0", name="Microsoft Hazel Desktop")
+DAVID = Voice(id="TTS_MS_EN-US_DAVID_11.0", name="Microsoft David Desktop")
+ZIRA = Voice(id="TTS_MS_EN-US_ZIRA_11.0", name="Microsoft Zira Desktop")
+HAZEL = Voice(id="TTS_MS_EN-GB_HAZEL_11.0", name="Microsoft Hazel Desktop")
 
 
 def test_roles_pick_their_preferred_voices():

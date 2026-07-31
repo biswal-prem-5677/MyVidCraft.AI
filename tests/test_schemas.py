@@ -56,7 +56,7 @@ def test_character_role_is_constrained():
         CharacterProfile(name="Ada", role="narrator")
 
 
-def test_phase2_artifact_types_exist():
+def test_audio_artifact_types_exist():
     values = {a.value for a in ArtifactType}
 
     assert {

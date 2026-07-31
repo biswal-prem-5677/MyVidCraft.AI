@@ -10,9 +10,13 @@ venv/
 node_modules/
 .next/
 out/
+# Incremental typecheck cache, written by `tsc --noEmit` / `next build`.
+*.tsbuildinfo
 
 .env
 .env.*
+# The template is documentation, not a secret — it must survive a fresh clone.
+!.env.example
 
 data/
 *.sqlite

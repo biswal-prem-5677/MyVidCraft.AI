@@ -7,13 +7,17 @@ audibly the same person. `assign_voices` gives each distinct speaker its own
 system voice, deterministically, so a re-run of the same script produces the
 same casting.
 
-Deliberately narrow: this is SAPI/pyttsx3 voice selection only, not the full
-Fish Speech `VoiceRegistry` the Tier-1 plan calls for in a later pass.
+Engine independent: casting operates on the `Voice` list any `SpeechEngine`
+reports, so swapping the backend does not change how speakers are cast. The role
+preferences below are the one system-voice-specific detail, and they degrade to
+round-robin on an engine whose voice names do not match them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+from .base import Voice
 
 # Preference order per role. First substring that matches an installed voice
 # wins; roles then fall back to round-robin over whatever is left.
@@ -22,17 +26,12 @@ _ROLE_PREFERENCES: dict[str, tuple[str, ...]] = {
     "guest": ("zira", "hazel", "susan", "female"),
 }
 
-# pyttsx3/SAPI `rate` is words-per-minute-ish, so the schema's `pace_wpm` maps
-# across directly. Clamped to the range SAPI stays intelligible in.
+# `rate` is words per minute, so the schema's `pace_wpm` maps across directly.
+# Clamped to the range speech stays intelligible in; engines that express pace
+# differently convert on the way in.
 MIN_RATE = 90
 MAX_RATE = 220
 DEFAULT_RATE = 175
-
-
-@dataclass(frozen=True)
-class SystemVoice:
-    id: str
-    name: str
 
 
 @dataclass(frozen=True)
@@ -43,13 +42,13 @@ class VoiceAssignment:
 
 
 def pace_to_rate(pace_wpm: int | None) -> int:
-    """Map a DialogueTurn.pace_wpm onto a SAPI rate."""
+    """Map a DialogueTurn.pace_wpm onto an engine rate."""
     if not pace_wpm:
         return DEFAULT_RATE
     return max(MIN_RATE, min(MAX_RATE, int(pace_wpm)))
 
 
-def _match(voices: list[SystemVoice], hints: tuple[str, ...], taken: set[str]) -> SystemVoice | None:
+def _match(voices: list[Voice], hints: tuple[str, ...], taken: set[str]) -> Voice | None:
     for hint in hints:
         for v in voices:
             if v.id in taken:
@@ -62,7 +61,7 @@ def _match(voices: list[SystemVoice], hints: tuple[str, ...], taken: set[str]) -
 
 def assign_voices(
     speakers: list[str],
-    voices: list[SystemVoice],
+    voices: list[Voice],
     roles: dict[str, str] | None = None,
 ) -> dict[str, VoiceAssignment]:
     """

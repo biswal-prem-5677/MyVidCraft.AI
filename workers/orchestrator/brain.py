@@ -5,26 +5,12 @@ from datetime import date, timedelta
 
 from packages.core.myvidcraft_core.llm_schemas import LLMStrategyPack
 from packages.core.myvidcraft_core.schemas import ContentCalendarItem, Platform, StrategyPack
+from packages.prompts import render as render_prompt
 
 from . import llm
 
 CALENDAR_DAYS = 7
 _PLATFORM_ROTATION = [Platform.youtube, Platform.podcast, Platform.youtube_shorts]
-
-_BRAIN_SYSTEM = """You are the content strategist for an AI podcast/video studio.
-
-You produce a strategy pack for a single niche: a slate of candidate topics, a
-library of hooks, and a short publishing calendar.
-
-Rules:
-- Hooks open with tension, a specific claim, or a curiosity gap. No "In this video".
-- Topics are specific and arguable, not generic listicles.
-- `hook_score` is your own 0.0-1.0 estimate of scroll-stopping power. Spread the
-  scores honestly across the range; do not give everything 0.9.
-- `format` is one of: talking_head, audio_episode, explainer, interview.
-- Write for the brand's stated tone. Never invent facts about real people.
-- Return between 8 and 12 topics, between 8 and 12 hooks, and exactly {days}
-  calendar items. Do not include dates; they are assigned by the caller."""
 
 
 def _stable_float_0_1(seed: str) -> float:
@@ -66,7 +52,7 @@ def _generate_strategy_llm(niche: str, brand_profile: dict) -> StrategyPack | No
     )
 
     result = llm.generate_structured(
-        system=_BRAIN_SYSTEM.format(days=CALENDAR_DAYS),
+        system=render_prompt("brain/strategy.system", days=CALENDAR_DAYS),
         user=user,
         output_format=LLMStrategyPack,
     )

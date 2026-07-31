@@ -69,19 +69,52 @@ Rule for this project: **each phase must end with a working vertical slice** and
 - **Status**
   - [ ] Not started
   - [ ] In progress
-  - [ ] Completed
+  - [x] Completed
 - **Objective**: Produce a watchable full episode video from mastered audio.
 - **What gets built**
   - MuseTalk video stage (LivePortrait fallback) driven by `episode.wav`
+    - **Deferred.** Both need a GPU and downloaded model weights, which would make
+      the video stage fail on every machine that lacks them. What shipped instead is
+      the `VideoRenderer` seam (`workers/media/video/base.py` + `registry.py`) with a
+      pure-Python compositor registered against it. A neural backend is a
+      registration, not an orchestrator change — see ARCHITECTURE.md. **This is the
+      one Tier-1 capability not yet real: the episode is a turn-aware cut, not a
+      lip-synced avatar.**
   - Minimal compositor: turn-aware cuts (or single track), speaker lower-thirds, burned captions (first-pass)
+    - **Shipped**: `workers/media/video/slideshow.py` — a two-up speaker stage where
+      the talking speaker is lit and the other dimmed, accent-coloured lower-thirds,
+      burned captions and a progress ticker. Draws through `raster.py`, a 5x7-font
+      software rasterizer, so the stage has no imaging dependency (the same rule
+      `normalize.py` follows). Frames are PPM; FFmpeg's concat demuxer expands one
+      frame per caption to a constant frame rate, so a 60s episode is a few dozen
+      images rather than 1,500.
+    - Captions are derived from `episode_timeline.json`, so they are frame-accurate
+      at every turn edge and drift at most one chunk mid-turn. Word-level accuracy
+      is the Phase 4 Whisper stage; only `build_captions`'s input changes.
+    - **Font covers printable ASCII only** — non-Latin captions render as `?` and
+      need a real font stack, which lands with the Phase 5 multilingual work.
   - B-roll support as *overlay slots* from `broll_cues` (static images acceptable in this phase)
+    - **Shipped as wired-but-empty**: cues travel from the script into a titled slot
+      panel in the frame. The panel shows the cue text rather than generated imagery —
+      filling it needs the Stable Diffusion asset pipeline, scheduled after the clip engine.
   - UI: episode video preview + download
+    - **Shipped**: an Episode video card with an inline player, mp4 and `.srt`
+      downloads, a storyboard inspector, and a re-cut control.
+  - **Added**: `POST /runs/{id}/regenerate-video` — the cheapest re-render in the
+    pipeline. Script and every WAV are reused; only the compositor runs again, so
+    iterating on the look does not pay for another TTS pass. Toggles burned captions
+    and B-roll slots.
 - **What is NOT included yet**
   - Whisper alignment (for word-perfect captions), automated clip engine, platform exports, full automated B-roll generation
+  - Lip sync itself (see above), and the `cpu/gpu` queue split — still one Celery queue
 - **Output (what works at the end)**
   - A complete lip-synced avatar episode video artifact generated via the async run
+    - **Actual**: a complete, watchable *composed* episode video (`episode.mp4`) plus
+      `captions.srt` and `storyboard.json`, generated via the async run. Without FFmpeg
+      the run still completes with the storyboard and captions.
 - **Key modules**
-  - `workers/media/video/avatar/`, `workers/media/video/compose/`, plus Phase 1–2 modules
+  - `workers/media/video/` (`base`, `registry`, `slideshow`, `captions`, `raster`, `mux`),
+    `workers/media/ffmpeg.py`, plus Phase 1–2 modules
 - **Depends on**
   - Phase 2 mastered audio + Phase 1 dialogue JSON
 
@@ -156,21 +189,53 @@ Rule for this project: **each phase must end with a working vertical slice** and
 6. **Clipper** uses Whisper + scene detection + emotion/saliency → selects highlights.
 7. **Exporter** renders platform variants + upload bundles + metadata.
 
-## Repo layout (recommended)
+## Repo layout (actual)
+
+Kept in sync with the tree. Directories marked *(planned)* do not exist yet.
 
 ```
 MyVidCraft.ai/
   apps/
-    web/                 # Next.js + shadcn UI
-    api/                 # FastAPI (REST + websockets)
+    web/                 # Next.js 15 + React 19 (plain CSS; shadcn not adopted)
+    api/                 # FastAPI (REST + websocket)
   workers/
-    orchestrator/        # Celery app + task graph
-    media/               # media pipelines (ffmpeg, whisper, yolo, musetalk)
+    orchestrator/        # Celery app, task graph, and the Brain/Dialogue engines
+      brain.py           #   niche + brand -> StrategyPack
+      dialogue.py        #   -> EpisodePlan + DialogueTurn[]
+      llm.py             #   Anthropic wrapper; never raises into the pipeline
+      tasks.py           #   task graph + in-process fallback
+    media/
+      ffmpeg.py          #   one place that locates the binary; optional everywhere
+      tts/               #   SpeechEngine protocol + registry + pyttsx3 impl
+      audio/             #   stitch, normalize, encode
+      video/             #   VideoRenderer protocol + registry + slideshow compositor
+        raster.py        #     software rasterizer (no imaging dependency)
+        captions.py      #     timeline -> captions -> SRT
+        mux.py           #     concat playlist -> mp4
+      asr/  clips/       #   (planned, Phase 4)
   packages/
-    core/                # shared types, JSON schemas, scoring
+    core/myvidcraft_core/  # shared schemas + the Stage/progress model
+    prompts/               # prompt templates as versioned .md files
   docs/
     IMPLEMENTATION_PLAN_TIER1.md
+    ARCHITECTURE.md      # engine seams, artifact contract, degradation rules
+  tests/
 ```
+
+### Naming rule
+
+Modules, Celery tasks and stages are named after the **engine** that owns them,
+never after the phase that introduced them. A phase number describes when
+something was built, which stops being useful once it is built.
+
+| Stage / task name | Module |
+|---|---|
+| `brain.generate_strategy` | `workers/orchestrator/brain.py` |
+| `dialogue.generate_script` | `workers/orchestrator/dialogue.py` |
+| `voice.generate_turn_audio` | `workers/media/tts/` |
+| `audio.stitch_master` | `workers/media/audio/` |
+| `video.compose_episode` | `workers/media/video/` |
+| `run.*` (lifecycle) | `workers/orchestrator/tasks.py` |
 
 ## “Autonomous Content Brain” (Core Differentiator)
 
@@ -472,9 +537,19 @@ Reliability:
   - [x] voice casting (role preferences, determinism, wrap-around)
   - [x] FFmpeg MP3 export (encode tests skip automatically when FFmpeg is absent)
   - [x] API surface + the voice-only rerun (artifact purge, run reset, override handling)
+  - [x] caption segmentation + SRT (contiguity, no drift, no overlapping cues)
+  - [x] the software rasterizer (clipping, alpha, font metrics, PPM output)
+  - [x] the concat playlist + mux guards (bare filenames, repeated last frame)
+  - [x] the compositor (gapless scenes, even dimensions, degradation without FFmpeg)
+  - [x] the video-only re-render (purge asymmetry vs. a voice rerun, frame cleanup, API surface)
   - [ ] clip scoring functions (Phase 4)
 - Integration tests:
-  - [ ] a “tiny run” (30–45s) end-to-end — the API tests stub the pipeline kickoff, because a live run drives the system speech engine for minutes
+  - [x] a “tiny run” end-to-end (`tests/test_pipeline_integration.py`) — a fake
+    `SpeechEngine` writing 20ms of silence makes the whole chain run in milliseconds,
+    which is the second payoff of putting synthesis behind a protocol. Covers the
+    timeline matching the audio actually written, the storyboard covering the audio
+    with no gaps, and both rerun paths. The API tests still stub kickoff, because a
+    live run drives the system speech engine for minutes.
 - Metrics:
   - stage latency
   - GPU/CPU utilization
@@ -544,7 +619,10 @@ Reliability:
 - [x] Start a run in < 2 seconds (async kickoff) — the broker is TCP-probed before enqueue, so an unreachable Redis fails over to in-process execution instantly instead of blocking on the kombu retry budget
 - [x] Script JSON validates (100% of runs) — schema-enforced, with a deterministic template fallback when no LLM key is configured
 - [x] Audio generated and playable — per-turn WAVs + mastered `episode.wav` (`episode.mp3` when FFmpeg is present)
-- [ ] Video render completes with lip sync
+- [~] Video render completes with lip sync — the render completes and is watchable
+  (`episode.mp4` + burned captions + `captions.srt`), but it is a turn-aware composed
+  cut, **not** lip sync. MuseTalk/LivePortrait are deferred behind the `VideoRenderer`
+  seam; this box is not honestly checkable until one is registered.
 - [ ] At least 3 clips exported with captions
 - [x] Artifact URLs stable and downloadable — `/artifacts/{id}/file`, path-guarded to the artifacts dir
 - [ ] Basic metrics captured per stage — the `metrics` table is still unbuilt; stage timing is only visible as progress events

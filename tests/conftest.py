@@ -101,7 +101,7 @@ def client(monkeypatch):
     """
     FastAPI test client with the pipeline stubbed out.
 
-    Both kickoff paths report "celery" so the API never starts a real render —
+    Every kickoff path reports "celery" so the API never starts a real render —
     a live run would drive the system speech engine for minutes.
     """
     from fastapi.testclient import TestClient
@@ -110,6 +110,7 @@ def client(monkeypatch):
 
     monkeypatch.setattr(tasks, "kickoff", lambda run_id: "celery")
     monkeypatch.setattr(tasks, "kickoff_voice", lambda run_id: "celery")
+    monkeypatch.setattr(tasks, "kickoff_video", lambda run_id: "celery")
 
     from apps.api.main import app
 

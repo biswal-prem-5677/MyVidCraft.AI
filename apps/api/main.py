@@ -19,7 +19,8 @@ from packages.core.myvidcraft_core.schemas import (
     ProjectOut,
     RunCreate,
     RunOut,
-    SystemVoiceOut,
+    VideoRerunCreate,
+    VoiceOut,
     VoiceRerunCreate,
 )
 
@@ -63,12 +64,26 @@ def health() -> dict[str, Any]:
     from workers.orchestrator import llm
     from workers.orchestrator.tasks import broker_reachable
 
+    # The video renderer reports its own readiness: FFmpeg is optional, and a run
+    # without it still produces a storyboard and captions.
+    video_ready, video_detail = False, "unavailable"
+    try:
+        from workers.media.video.registry import get_renderer
+
+        video_ready, video_detail = get_renderer().available()
+    except LookupError as e:
+        video_detail = str(e)
+
     return {
         "status": "ok",
         "llm_enabled": llm.is_enabled(),
         "llm_model": settings.llm_model if llm.is_enabled() else None,
         "broker_reachable": broker_reachable(),
         "ffmpeg": ffmpeg_available(),
+        "tts_engine": settings.tts_engine,
+        "video_engine": settings.video_engine,
+        "video_ready": video_ready,
+        "video_detail": video_detail,
     }
 
 
@@ -137,12 +152,19 @@ def _run_detached(run_id: str, target) -> None:
     threading.Thread(target=target, args=(run_id,), name=f"run-{run_id[:8]}", daemon=True).start()
 
 
-@app.get("/voices", response_model=list[SystemVoiceOut])
-def list_voices() -> list[SystemVoiceOut]:
-    """Installed system voices, for picking a per-speaker override."""
-    from workers.media.tts.pyttsx3_tts import list_system_voices
+@app.get("/voices", response_model=list[VoiceOut])
+def list_voices() -> list[VoiceOut]:
+    """Voices the active speech engine offers, for picking a per-speaker override."""
+    from workers.media.tts.registry import get_engine
 
-    return [SystemVoiceOut(id=v.id, name=v.name) for v in list_system_voices()]
+    try:
+        engine = get_engine()
+    except LookupError as e:
+        # Misconfigured engine name: surface it here rather than at the first
+        # synthesis, which happens minutes into a run.
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return [VoiceOut(id=v.id, name=v.name) for v in engine.list_voices()]
 
 
 @app.post("/runs/{run_id}/regenerate-voice", response_model=RunOut)
@@ -192,6 +214,56 @@ def regenerate_voice(
 
     if kickoff_voice(run.id) == "local":
         _run_detached(run.id, run_voice_pipeline_local)
+
+    return _run_out(run)
+
+
+@app.post("/runs/{run_id}/regenerate-video", response_model=RunOut)
+def regenerate_video(
+    run_id: str,
+    payload: VideoRerunCreate | None = None,
+    session: Session = Depends(get_session),
+) -> RunOut:
+    """
+    Re-cut the episode video, reusing its existing audio.
+
+    The cheapest re-render in the pipeline: the script, the per-turn WAVs and the
+    mastered episode are all left alone, and only the compositor runs again. This
+    is what makes iterating on the look affordable — a voice rerun would pay for
+    a full TTS pass to change a caption setting.
+    """
+    payload = payload or VideoRerunCreate()
+
+    run = session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status not in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run is {run.status}; wait for it to finish or cancel it before re-cutting the video",
+        )
+    # Checked directly rather than via `run_dir`, which would create the directory
+    # as a side effect of a validation check.
+    if not (Path(settings.artifacts_dir) / run.id / "episode_timeline.json").exists():
+        raise HTTPException(status_code=400, detail="Run has no episode timeline to re-cut")
+
+    # Reassign rather than mutate: SQLAlchemy does not track in-place edits to a
+    # JSON column, so a mutated dict would never be written back.
+    config = dict(run.config_json or {})
+    config["video_captions"] = payload.captions
+    config["video_broll_slots"] = payload.show_broll_slots
+    run.config_json = config
+    run.status = "queued"
+    run.stage = "queued"
+    run.error = None
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    from workers.orchestrator.tasks import kickoff_video, run_video_pipeline_local
+
+    if kickoff_video(run.id) == "local":
+        _run_detached(run.id, run_video_pipeline_local)
 
     return _run_out(run)
 
@@ -263,6 +335,7 @@ def download_artifact_file(artifact_id: str, session: Session = Depends(get_sess
         ".mp3": "audio/mpeg",
         ".json": "application/json",
         ".mp4": "video/mp4",
+        ".srt": "text/plain; charset=utf-8",
     }.get(target.suffix.lower(), "application/octet-stream")
     return FileResponse(path=str(target), media_type=media, filename=target.name)
 

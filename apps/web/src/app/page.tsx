@@ -5,7 +5,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type Project = { id: string; name: string; niche: string };
 type Run = { id: string; status: string; stage: string; progress: number; error?: string | null };
 type Artifact = { id: string; type: string; path: string; created_at: string; metadata: Record<string, unknown> };
-type SystemVoice = { id: string; name: string };
+type Voice = { id: string; name: string };
+type Health = { video_engine: string; video_ready: boolean; video_detail: string };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
@@ -19,7 +20,7 @@ function safeJsonParse(input: string): unknown {
 }
 
 export default function HomePage() {
-  const [projectName, setProjectName] = useState("MyVidCraft Phase 2");
+  const [projectName, setProjectName] = useState("MyVidCraft Phase 3");
   const [niche, setNiche] = useState("AI productivity");
   const [mode, setMode] = useState("teaching");
   const [brandProfileText, setBrandProfileText] = useState(
@@ -33,21 +34,42 @@ export default function HomePage() {
   const [artifactContents, setArtifactContents] = useState<Record<string, any>>({});
   const [busy, setBusy] = useState(false);
   const [revoicing, setRevoicing] = useState(false);
+  const [recutting, setRecutting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   // Voice casting: speakers come from the TTS manifest of the last render, so the
   // override selects only appear once there is audio to re-render.
-  const [voices, setVoices] = useState<SystemVoice[]>([]);
+  const [voices, setVoices] = useState<Voice[]>([]);
   const [castVoices, setCastVoices] = useState<Record<string, string>>({});
   const [voiceOverrides, setVoiceOverrides] = useState<Record<string, string>>({});
+
+  // Compositor look. These ride on the re-cut request rather than being stored
+  // client-side state of the last render — the run's config is the record.
+  const [showCaptions, setShowCaptions] = useState(true);
+  const [showBrollSlots, setShowBrollSlots] = useState(true);
+  const [health, setHealth] = useState<Health | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
 
   const progressPct = useMemo(() => Math.round(((run?.progress ?? 0) * 100 + Number.EPSILON) * 1) / 1, [run?.progress]);
+  const isTerminal = useMemo(() => TERMINAL_STATUSES.includes(run?.status ?? ""), [run?.status]);
   const canRevoice = useMemo(
-    () => Boolean(run?.id) && TERMINAL_STATUSES.includes(run?.status ?? "") && Object.keys(castVoices).length > 0,
-    [run?.id, run?.status, castVoices]
+    () => Boolean(run?.id) && isTerminal && Object.keys(castVoices).length > 0,
+    [run?.id, isTerminal, castVoices]
   );
+
+  const byType = useMemo(() => {
+    const map: Record<string, Artifact[]> = {};
+    for (const a of artifacts) (map[a.type] ??= []).push(a);
+    return map;
+  }, [artifacts]);
+
+  const videoArtifact = byType["episode_video_mp4"]?.[0] ?? null;
+  const storyboardArtifact = byType["video_storyboard"]?.[0] ?? null;
+  const captionsArtifact = byType["episode_captions_srt"]?.[0] ?? null;
+  // A re-cut needs the timeline the audio stage wrote, which is exactly what the
+  // API checks for; gating on it here keeps the button from 400ing.
+  const canRecut = Boolean(run?.id) && isTerminal && Boolean(byType["episode_timeline"]?.length);
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -116,6 +138,25 @@ export default function HomePage() {
     }
   }
 
+  async function regenerateVideo() {
+    if (!run?.id) return;
+    setRecutting(true);
+    setNotice(null);
+    try {
+      const r = await api<Run>(`/runs/${run.id}/regenerate-video`, {
+        method: "POST",
+        body: JSON.stringify({ captions: showCaptions, show_broll_slots: showBrollSlots })
+      });
+      setRun(r);
+      setEvents([]);
+      connectWs(r.id);
+    } catch (e: any) {
+      setNotice(`Could not re-cut the video: ${e?.message ?? e}`);
+    } finally {
+      setRecutting(false);
+    }
+  }
+
   function connectWs(runId: string) {
     wsRef.current?.close();
     const wsUrl = API_BASE.replace(/^http/, "ws") + `/ws/runs/${runId}`;
@@ -179,10 +220,15 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    // Installed system voices are a property of the machine, not of a run.
-    api<SystemVoice[]>("/voices")
+    // Installed system voices and renderer readiness are properties of the
+    // machine, not of a run: a missing FFmpeg should be visible before the first
+    // render finishes without one.
+    api<Voice[]>("/voices")
       .then(setVoices)
       .catch(() => setVoices([]));
+    api<Health>("/health")
+      .then(setHealth)
+      .catch(() => setHealth(null));
     return () => wsRef.current?.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -191,9 +237,9 @@ export default function HomePage() {
     <div className="container">
       <div className="header">
         <div>
-          <div className="title">MyVidCraft.ai — Phase 2</div>
+          <div className="title">MyVidCraft.ai — Phase 3</div>
           <div className="subtitle">
-            Content Brain → Dialogue JSON → per-turn TTS → mastered episode audio (async runs + artifacts)
+            Content Brain → Dialogue JSON → per-turn TTS → mastered audio → cut episode video (async runs + artifacts)
           </div>
         </div>
         <div className="pill mono">
@@ -304,6 +350,76 @@ export default function HomePage() {
 
       <div style={{ height: 12 }} />
 
+      <div className="card">
+        <h3>Episode video</h3>
+        {!storyboardArtifact ? (
+          <div className="subtitle">
+            No video cut yet. A finished run produces the episode video, burned captions and a storyboard.
+          </div>
+        ) : (
+          <div className="row">
+            {videoArtifact ? (
+              <video
+                controls
+                preload="metadata"
+                style={{ width: "100%", borderRadius: 12, border: "1px solid var(--border)", background: "#000" }}
+                src={`${API_BASE}/artifacts/${videoArtifact.id}/file`}
+              />
+            ) : (
+              <pre className="pre mono">
+                {`No episode.mp4 for this run.\n\n` +
+                  (health && !health.video_ready
+                    ? `${health.video_engine}: ${health.video_detail}`
+                    : "The compositor could not mux. See the storyboard notes below.")}
+              </pre>
+            )}
+
+            <div className="row2">
+              {videoArtifact ? (
+                <a className="btn2" style={{ textAlign: "center", textDecoration: "none" }}
+                   href={`${API_BASE}/artifacts/${videoArtifact.id}/file`} download>
+                  Download mp4
+                </a>
+              ) : null}
+              {captionsArtifact ? (
+                <a className="btn2" style={{ textAlign: "center", textDecoration: "none" }}
+                   href={`${API_BASE}/artifacts/${captionsArtifact.id}/file`} download>
+                  Download captions (.srt)
+                </a>
+              ) : null}
+            </div>
+
+            <div className="label">Re-cut the look</div>
+            <div className="row2">
+              <label className="pill" style={{ cursor: "pointer" }}>
+                <input type="checkbox" checked={showCaptions} onChange={(e) => setShowCaptions(e.target.checked)} />
+                Burned captions
+              </label>
+              <label className="pill" style={{ cursor: "pointer" }}>
+                <input type="checkbox" checked={showBrollSlots} onChange={(e) => setShowBrollSlots(e.target.checked)} />
+                B-roll slots
+              </label>
+            </div>
+            <button className="btn" disabled={!canRecut || recutting} onClick={regenerateVideo}>
+              {recutting ? "Re-cutting…" : "Re-cut video only"}
+            </button>
+            <div className="subtitle">
+              The cheapest re-render in the pipeline: the script and every WAV are reused, and only the compositor runs
+              again.
+            </div>
+
+            <button className="btn2" onClick={() => loadArtifactJson(storyboardArtifact)}>
+              Show storyboard
+            </button>
+            {artifactContents[storyboardArtifact.id] ? (
+              <pre className="pre mono">{JSON.stringify(artifactContents[storyboardArtifact.id], null, 2)}</pre>
+            ) : null}
+          </div>
+        )}
+      </div>
+
+      <div style={{ height: 12 }} />
+
       <div className="grid">
         <div className="card">
           <h3>Artifacts</h3>
@@ -333,11 +449,26 @@ export default function HomePage() {
                       <div style={{ height: 10 }} />
                     </>
                   ) : null}
-                  <button className="btn2" onClick={() => loadArtifactJson(a)}>
-                    Show details
-                  </button>
-                  <div style={{ height: 10 }} />
-                  <pre className="pre mono">{JSON.stringify(artifactContents[a.id] ?? {}, null, 2)}</pre>
+                  {/* Only JSON artifacts can be inspected inline; everything else
+                      is a media file and is offered as a download instead. */}
+                  {a.path.endsWith(".json") ? (
+                    <>
+                      <button className="btn2" onClick={() => loadArtifactJson(a)}>
+                        Show details
+                      </button>
+                      {artifactContents[a.id] ? (
+                        <>
+                          <div style={{ height: 10 }} />
+                          <pre className="pre mono">{JSON.stringify(artifactContents[a.id], null, 2)}</pre>
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <a className="btn2" style={{ display: "block", textAlign: "center", textDecoration: "none" }}
+                       href={`${API_BASE}/artifacts/${a.id}/file`} download>
+                      Download
+                    </a>
+                  )}
                 </div>
               ))}
             </div>

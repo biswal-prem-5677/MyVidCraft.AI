@@ -8,65 +8,17 @@ from packages.core.myvidcraft_core.schemas import (
     EpisodeBeat,
     EpisodePlan,
 )
+from packages.prompts import load as load_prompt
+from packages.prompts import render as render_prompt
 
 from . import llm
 
 TARGET_MINUTES = 6
 
-_MODE_GUIDANCE = {
-    DialogueMode.debate: (
-        "Debate mode: the two speakers genuinely disagree. Use interruptions, "
-        "rhetorical questions, and at least one 'gotcha' beat where one speaker "
-        "concedes a point. Do not let it collapse into agreement."
-    ),
-    DialogueMode.storytelling: (
-        "Storytelling mode: build a narrative arc with a cliffhanger every 20-40 "
-        "seconds of speech. Use concrete sensory detail. The guest carries the "
-        "story; the host reacts and asks the question the listener is thinking."
-    ),
-    DialogueMode.teaching: (
-        "Teaching mode: numbered steps, one concrete worked example per concept, "
-        "and a recap loop at the end. The host asks the clarifying questions a "
-        "beginner would ask."
-    ),
-}
 
-_PLAN_SYSTEM = """You are the showrunner for an AI podcast studio. You design the
-blueprint for a single two-speaker episode before any dialogue is written.
-
-Produce:
-- A title that makes a specific, arguable promise.
-- A premise: what the episode actually argues or teaches.
-- A stance: the opinionated position the show takes.
-- 4 to 6 beats forming a real arc (hook, development, tension, payoff, close).
-- Exactly 2 characters: one with role "host", one with role "guest". Give them
-  real names, not "Host" and "Guest".
-
-Never invent facts, statistics, or quotes attributable to real people."""
-
-_SCRIPT_SYSTEM = """You are the head writer for an AI podcast studio. You write the
-spoken dialogue for a two-speaker episode.
-
-This script is fed directly into text-to-speech, so these constraints are hard:
-- SHORT SENTENCES. Prefer under 20 words. Never exceed 30.
-- Write words as they should be spoken. No markdown, no bullet points, no stage
-  directions, no parentheticals, no emoji, no "[laughs]".
-- Spell out anything TTS mangles: "twenty twenty six" not "2026", "percent" not
-  "%", "dollars" not "$".
-- `pace_wpm` is the target speaking rate, 90 to 220. Use faster rates for excited
-  or urgent lines, slower for weighty ones.
-- `pause_before_ms` (0-5000) and `pause_after_ms` (0-8000) control the silence
-  around a turn. Use a longer pause after a punchline or before a reveal.
-- `speaker` MUST exactly match one of the character names given to you.
-- `emotion` is a single lowercase word, e.g. neutral, excited, skeptical, warm.
-- `broll_cues` describe what appears on screen during the turn. Leave empty when
-  nothing should change.
-- `safety_flags` lists anything needing review (medical, financial, or legal
-  claims). Usually empty.
-
-Open on a cold hook with no greeting and no "welcome back". Close with a single
-clear call to action. Never invent facts, statistics, or quotes attributable to
-real people."""
+def _mode_guidance(mode: DialogueMode) -> str:
+    """Per-mode direction. One prompt file per mode, named after the enum value."""
+    return load_prompt(f"dialogue/mode_{mode.value}")
 
 
 # --------------------------------------------------------------------------
@@ -83,7 +35,7 @@ def generate_episode_plan(niche: str, mode: DialogueMode, brand_profile: dict) -
 
 
 def _constraints(mode: DialogueMode) -> dict:
-    return {"phase": 1, "target_minutes": TARGET_MINUTES, "mode": mode.value}
+    return {"target_minutes": TARGET_MINUTES, "mode": mode.value}
 
 
 def _generate_episode_plan_llm(niche: str, mode: DialogueMode, brand_profile: dict) -> EpisodePlan | None:
@@ -95,7 +47,7 @@ def _generate_episode_plan_llm(niche: str, mode: DialogueMode, brand_profile: di
     user = (
         f"Niche: {niche}\n"
         f"Dialogue mode: {mode.value}\n"
-        f"{_MODE_GUIDANCE[mode]}\n"
+        f"{_mode_guidance(mode)}\n"
         f"Host tone: {host_tone}\n"
         f"Guest tone: {guest_tone}\n"
         f"Target runtime: about {TARGET_MINUTES} minutes.\n"
@@ -104,7 +56,11 @@ def _generate_episode_plan_llm(niche: str, mode: DialogueMode, brand_profile: di
         + "\nDesign the episode blueprint."
     )
 
-    result = llm.generate_structured(system=_PLAN_SYSTEM, user=user, output_format=LLMEpisodePlan)
+    result = llm.generate_structured(
+        system=render_prompt("dialogue/plan.system"),
+        user=user,
+        output_format=LLMEpisodePlan,
+    )
     if result is None:
         return None
     # A two-speaker show needs exactly two speakers; anything else breaks voice
@@ -201,7 +157,7 @@ def _generate_dialogue_llm(
     lines = [
         f"Niche: {niche}",
         f"Dialogue mode: {mode.value}",
-        _MODE_GUIDANCE[mode],
+        _mode_guidance(mode),
         "",
         f"Speaker names (use these EXACTLY): {host_name} (host), {guest_name} (guest)",
     ]
@@ -232,7 +188,7 @@ def _generate_dialogue_llm(
     ]
 
     result = llm.generate_structured(
-        system=_SCRIPT_SYSTEM,
+        system=render_prompt("dialogue/script.system"),
         user="\n".join(lines),
         output_format=LLMDialogueScript,
     )

@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from apps.api.db import create_db_and_tables, engine
 from apps.api.models import Artifact, Run
+from packages.core.myvidcraft_core.stages import Stage, stage_bounds
 from workers.orchestrator import tasks
 
 
@@ -93,9 +94,11 @@ def test_prepare_resets_a_completed_run_to_running(run_with_audio):
         run = session.get(Run, run_id)
 
     assert run.status == "running"
-    assert run.stage == "tts_generate_turn_audio"
+    assert run.stage == Stage.voice_turns.value
     assert run.completed_at is None
-    assert run.progress == pytest.approx(0.55)
+    # Rewound to the start of the voice stage: the script stages are not re-run,
+    # but the bar must not claim their work is still pending either.
+    assert run.progress == pytest.approx(stage_bounds(Stage.voice_turns)[0])
 
 
 def test_prepare_clears_a_previous_failure(run_with_audio):
