@@ -44,14 +44,17 @@ Rule for this project: **each phase must end with a working vertical slice** and
 
 - **Status**
   - [ ] Not started
-  - [x] In progress
-  - [ ] Completed
+  - [ ] In progress
+  - [x] Completed
 - **Objective**: Deterministically convert dialogue JSON into mastered episode audio.
 - **What gets built**
-  - VoiceRegistry + per-speaker voice assignment (Fish Speech primary; XTTS/GPT-SoVITS fallback)
+  - VoiceRegistry + per-speaker voice assignment (**shipped against the local system engine via pyttsx3/SAPI**; Fish Speech / XTTS deferred)
   - Map TTS over `DialogueTurn[]` → per-turn WAV artifacts
-  - Audio stitch/master: pauses, normalization (LUFS), optional music ducking → `episode.wav` + `episode.mp3`
+  - Audio stitch/master: pauses, normalization, optional music ducking → `episode.wav` + `episode.mp3`
+    - **Shipped**: RMS normalization with a true-peak ceiling (`workers/media/audio/normalize.py`). Full EBU R128/LUFS gating and music ducking are still open — Python 3.13 dropped `audioop`, so this is a dependency-free implementation over `array`. Swapping in real LUFS metering only changes `_measure`.
+    - **Shipped**: MP3 export shells out to FFmpeg and is best-effort — a machine without FFmpeg still completes the run with `episode.wav` only.
   - UI: preview per-turn and full episode audio; “regenerate voice only” without regenerating script
+    - **Shipped**: `POST /runs/{id}/regenerate-voice` reruns only the TTS + stitch stages against the existing `dialogue_turns.json`, purging the previous audio artifacts first. Accepts optional per-speaker `voice_overrides` (ids from `GET /voices`).
 - **What is NOT included yet**
   - Avatar/lip-sync video, automated B-roll generation, Whisper alignment, clip extraction, platform exports
 - **Output (what works at the end)**
@@ -463,12 +466,15 @@ Reliability:
 
 ## Testing + Observability
 
-- Unit tests:
-  - JSON schema validation
-  - clip scoring functions
-  - ffmpeg command builders
+- Unit tests (`pytest`, see `tests/`):
+  - [x] JSON schema validation
+  - [x] loudness normalization + WAV stitching (pause insertion, param-mismatch rejection)
+  - [x] voice casting (role preferences, determinism, wrap-around)
+  - [x] FFmpeg MP3 export (encode tests skip automatically when FFmpeg is absent)
+  - [x] API surface + the voice-only rerun (artifact purge, run reset, override handling)
+  - [ ] clip scoring functions (Phase 4)
 - Integration tests:
-  - a “tiny run” (30–45s) end-to-end
+  - [ ] a “tiny run” (30–45s) end-to-end — the API tests stub the pipeline kickoff, because a live run drives the system speech engine for minutes
 - Metrics:
   - stage latency
   - GPU/CPU utilization
@@ -535,11 +541,11 @@ Reliability:
 
 ## MVP acceptance checklist
 
-- [ ] Start a run in < 2 seconds (async kickoff)
-- [ ] Script JSON validates (100% of runs)
-- [ ] Audio generated and playable
+- [x] Start a run in < 2 seconds (async kickoff) — the broker is TCP-probed before enqueue, so an unreachable Redis fails over to in-process execution instantly instead of blocking on the kombu retry budget
+- [x] Script JSON validates (100% of runs) — schema-enforced, with a deterministic template fallback when no LLM key is configured
+- [x] Audio generated and playable — per-turn WAVs + mastered `episode.wav` (`episode.mp3` when FFmpeg is present)
 - [ ] Video render completes with lip sync
 - [ ] At least 3 clips exported with captions
-- [ ] Artifact URLs stable and downloadable
-- [ ] Basic metrics captured per stage
+- [x] Artifact URLs stable and downloadable — `/artifacts/{id}/file`, path-guarded to the artifacts dir
+- [ ] Basic metrics captured per stage — the `metrics` table is still unbuilt; stage timing is only visible as progress events
 

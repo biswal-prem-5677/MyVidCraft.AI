@@ -103,6 +103,17 @@ class RunCreate(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class VoiceRerunCreate(BaseModel):
+    """Body for a voice-only rerun: optionally pin a system voice per speaker."""
+
+    voice_overrides: dict[str, str] = Field(default_factory=dict)
+
+
+class SystemVoiceOut(BaseModel):
+    id: str
+    name: str
+
+
 class RunStatus(str, Enum):
     queued = "queued"
     running = "running"
@@ -117,6 +128,7 @@ class ArtifactType(str, Enum):
     dialogue = "dialogue"
     run_config = "run_config"
     turn_audio_wav = "turn_audio_wav"
+    turn_audio_manifest = "turn_audio_manifest"
     episode_audio_wav = "episode_audio_wav"
     episode_audio_mp3 = "episode_audio_mp3"
 

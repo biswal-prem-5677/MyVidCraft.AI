@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -10,7 +10,9 @@ from sqlmodel import Field, SQLModel
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    # datetime.utcnow() is deprecated in Python 3.12+. Stored naive (UTC) to stay
+    # compatible with the existing SQLite columns.
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Project(SQLModel, table=True):

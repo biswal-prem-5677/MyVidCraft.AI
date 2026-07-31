@@ -5,8 +5,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type Project = { id: string; name: string; niche: string };
 type Run = { id: string; status: string; stage: string; progress: number; error?: string | null };
 type Artifact = { id: string; type: string; path: string; created_at: string; metadata: Record<string, unknown> };
+type SystemVoice = { id: string; name: string };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+const TERMINAL_STATUSES = ["completed", "failed", "cancelled"];
 
 function safeJsonParse(input: string): unknown {
   try {
@@ -17,7 +19,7 @@ function safeJsonParse(input: string): unknown {
 }
 
 export default function HomePage() {
-  const [projectName, setProjectName] = useState("MyVidCraft Phase1");
+  const [projectName, setProjectName] = useState("MyVidCraft Phase 2");
   const [niche, setNiche] = useState("AI productivity");
   const [mode, setMode] = useState("teaching");
   const [brandProfileText, setBrandProfileText] = useState(
@@ -30,10 +32,22 @@ export default function HomePage() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [artifactContents, setArtifactContents] = useState<Record<string, any>>({});
   const [busy, setBusy] = useState(false);
+  const [revoicing, setRevoicing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Voice casting: speakers come from the TTS manifest of the last render, so the
+  // override selects only appear once there is audio to re-render.
+  const [voices, setVoices] = useState<SystemVoice[]>([]);
+  const [castVoices, setCastVoices] = useState<Record<string, string>>({});
+  const [voiceOverrides, setVoiceOverrides] = useState<Record<string, string>>({});
 
   const wsRef = useRef<WebSocket | null>(null);
 
   const progressPct = useMemo(() => Math.round(((run?.progress ?? 0) * 100 + Number.EPSILON) * 1) / 1, [run?.progress]);
+  const canRevoice = useMemo(
+    () => Boolean(run?.id) && TERMINAL_STATUSES.includes(run?.status ?? "") && Object.keys(castVoices).length > 0,
+    [run?.id, run?.status, castVoices]
+  );
 
   async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -46,9 +60,12 @@ export default function HomePage() {
 
   async function createProjectAndRun() {
     setBusy(true);
+    setNotice(null);
     setEvents([]);
     setArtifacts([]);
     setArtifactContents({});
+    setCastVoices({});
+    setVoiceOverrides({});
     setRun(null);
     try {
       const p = await api<Project>("/projects", {
@@ -68,8 +85,34 @@ export default function HomePage() {
       });
       setRun(r);
       connectWs(r.id);
+    } catch (e: any) {
+      setNotice(`Could not start run: ${e?.message ?? e}`);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function regenerateVoice() {
+    if (!run?.id) return;
+    setRevoicing(true);
+    setNotice(null);
+    try {
+      // Only send genuine changes; an empty map means "recast automatically".
+      const overrides = Object.fromEntries(
+        Object.entries(voiceOverrides).filter(([speaker, id]) => id && id !== castVoices[speaker])
+      );
+      const r = await api<Run>(`/runs/${run.id}/regenerate-voice`, {
+        method: "POST",
+        body: JSON.stringify({ voice_overrides: overrides })
+      });
+      setRun(r);
+      setEvents([]);
+      setArtifactContents({});
+      connectWs(r.id);
+    } catch (e: any) {
+      setNotice(`Could not regenerate voice: ${e?.message ?? e}`);
+    } finally {
+      setRevoicing(false);
     }
   }
 
@@ -106,6 +149,23 @@ export default function HomePage() {
     try {
       const list = await api<Artifact[]>(`/runs/${runId}/artifacts`);
       setArtifacts(list);
+      await loadCast(list);
+    } catch {}
+  }
+
+  async function loadCast(list: Artifact[]) {
+    const manifest = list.find((a) => a.type === "turn_audio_manifest");
+    if (!manifest) return;
+    try {
+      const payload = await api<any>(`/artifacts/${manifest.id}/json`);
+      const cast: Record<string, string> = {};
+      for (const [speaker, v] of Object.entries<any>(payload?.voices ?? {})) {
+        if (v?.voice_id) cast[speaker] = v.voice_id;
+      }
+      setCastVoices(cast);
+      // Seed the selects with what was actually used, without clobbering a
+      // choice the user has already made for the next re-render.
+      setVoiceOverrides((prev) => ({ ...cast, ...prev }));
     } catch {}
   }
 
@@ -119,15 +179,22 @@ export default function HomePage() {
   }
 
   useEffect(() => {
+    // Installed system voices are a property of the machine, not of a run.
+    api<SystemVoice[]>("/voices")
+      .then(setVoices)
+      .catch(() => setVoices([]));
     return () => wsRef.current?.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
     <div className="container">
       <div className="header">
         <div>
-          <div className="title">MyVidCraft.ai — Phase 1</div>
-          <div className="subtitle">Content Brain → StrategyPack + multi-agent Dialogue JSON (async runs + artifacts)</div>
+          <div className="title">MyVidCraft.ai — Phase 2</div>
+          <div className="subtitle">
+            Content Brain → Dialogue JSON → per-turn TTS → mastered episode audio (async runs + artifacts)
+          </div>
         </div>
         <div className="pill mono">
           API <strong>{API_BASE}</strong>
@@ -191,8 +258,48 @@ export default function HomePage() {
               <div style={{ width: `${progressPct}%` }} />
             </div>
             {run?.error ? <pre className="pre mono">{run.error}</pre> : null}
+            {notice ? <pre className="pre mono">{notice}</pre> : null}
           </div>
         </div>
+      </div>
+
+      <div style={{ height: 12 }} />
+
+      <div className="card">
+        <h3>Voice cast</h3>
+        {Object.keys(castVoices).length === 0 ? (
+          <div className="subtitle">
+            No audio rendered yet. Once a run finishes you can recast speakers and re-render the audio without
+            regenerating the script.
+          </div>
+        ) : (
+          <div className="row">
+            {Object.keys(castVoices).map((speaker) => (
+              <div key={speaker}>
+                <div className="label">{speaker}</div>
+                <select
+                  className="select"
+                  value={voiceOverrides[speaker] ?? castVoices[speaker] ?? ""}
+                  onChange={(e) => setVoiceOverrides((prev) => ({ ...prev, [speaker]: e.target.value }))}
+                >
+                  {voices.length === 0 ? <option value="">(system default)</option> : null}
+                  {voices.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            <button className="btn" disabled={!canRevoice || revoicing} onClick={regenerateVoice}>
+              {revoicing ? "Re-rendering…" : "Regenerate voice only"}
+            </button>
+            <div className="subtitle">
+              Keeps the strategy, episode plan and dialogue exactly as they are; replaces every per-turn WAV and the
+              mastered episode.
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ height: 12 }} />

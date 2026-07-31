@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+import json
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-import json
-from pathlib import Path
-
 import anyio
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
@@ -18,6 +19,8 @@ from packages.core.myvidcraft_core.schemas import (
     ProjectOut,
     RunCreate,
     RunOut,
+    SystemVoiceOut,
+    VoiceRerunCreate,
 )
 
 from . import artifact_store
@@ -26,8 +29,24 @@ from .models import Artifact, Project, Run
 from .realtime import subscribe_run_events
 from .settings import settings
 
+log = logging.getLogger(__name__)
 
-app = FastAPI(title="MyVidCraft.ai API (Phase 1)", version="0.1.0")
+TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Replaces the deprecated @app.on_event("startup") hook.
+    artifact_store.ensure_data_dirs()
+    create_db_and_tables()
+    yield
+
+
+app = FastAPI(title="MyVidCraft.ai API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,10 +57,19 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    artifact_store.ensure_data_dirs()
-    create_db_and_tables()
+@app.get("/health")
+def health() -> dict[str, Any]:
+    from workers.media.audio.encode import ffmpeg_available
+    from workers.orchestrator import llm
+    from workers.orchestrator.tasks import broker_reachable
+
+    return {
+        "status": "ok",
+        "llm_enabled": llm.is_enabled(),
+        "llm_model": settings.llm_model if llm.is_enabled() else None,
+        "broker_reachable": broker_reachable(),
+        "ffmpeg": ffmpeg_available(),
+    }
 
 
 @app.post("/projects", response_model=ProjectOut)
@@ -55,14 +83,7 @@ def create_project(payload: ProjectCreate, session: Session = Depends(get_sessio
     session.add(p)
     session.commit()
     session.refresh(p)
-    return ProjectOut(
-        id=p.id,
-        name=p.name,
-        niche=p.niche,
-        brand_profile=p.brand_profile_json,
-        defaults=p.defaults_json,
-        created_at=p.created_at,
-    )
+    return _project_out(p)
 
 
 @app.get("/projects/{project_id}", response_model=ProjectOut)
@@ -70,38 +91,107 @@ def get_project(project_id: str, session: Session = Depends(get_session)) -> Pro
     p = session.get(Project, project_id)
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
-    return ProjectOut(
-        id=p.id,
-        name=p.name,
-        niche=p.niche,
-        brand_profile=p.brand_profile_json,
-        defaults=p.defaults_json,
-        created_at=p.created_at,
-    )
+    return _project_out(p)
 
 
 @app.post("/projects/{project_id}/runs", response_model=RunOut)
-def create_run(
+async def create_run(
     project_id: str,
     payload: RunCreate,
-    background: BackgroundTasks,
     session: Session = Depends(get_session),
 ) -> RunOut:
     p = session.get(Project, project_id)
     if not p:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    run = Run(project_id=project_id, status="queued", stage="queued", progress=0.0, config_json=payload.model_dump())
+    run = Run(
+        project_id=project_id,
+        status="queued",
+        stage="queued",
+        progress=0.0,
+        config_json=payload.model_dump(mode="json"),
+    )
     session.add(run)
     session.commit()
     session.refresh(run)
 
-    # Kick off async pipeline.
-    from workers.orchestrator.tasks import kickoff_phase1, run_phase1_pipeline_local  # local import
+    from workers.orchestrator.tasks import kickoff, run_pipeline_local
 
-    mode = kickoff_phase1(run.id)
-    if mode == "local":
-        background.add_task(run_phase1_pipeline_local, run.id)
+    if kickoff(run.id) == "local":
+        _run_detached(run.id, run_pipeline_local)
+
+    return _run_out(run)
+
+
+def _run_detached(run_id: str, target) -> None:
+    """
+    Execute a pipeline in a detached daemon thread.
+
+    Deliberately NOT BackgroundTasks: those run after the response is sent but
+    still inside the request's task group, so a multi-minute TTS render would
+    hold the connection's resources. A detached worker thread also keeps the
+    blocking COM/SAPI calls off the event loop entirely.
+    """
+    import threading
+
+    threading.Thread(target=target, args=(run_id,), name=f"run-{run_id[:8]}", daemon=True).start()
+
+
+@app.get("/voices", response_model=list[SystemVoiceOut])
+def list_voices() -> list[SystemVoiceOut]:
+    """Installed system voices, for picking a per-speaker override."""
+    from workers.media.tts.pyttsx3_tts import list_system_voices
+
+    return [SystemVoiceOut(id=v.id, name=v.name) for v in list_system_voices()]
+
+
+@app.post("/runs/{run_id}/regenerate-voice", response_model=RunOut)
+def regenerate_voice(
+    run_id: str,
+    payload: VoiceRerunCreate | None = None,
+    session: Session = Depends(get_session),
+) -> RunOut:
+    """
+    Re-render audio for an existing run, reusing its script.
+
+    This is the "regenerate voice only" control: the strategy, episode plan and
+    dialogue artifacts are left exactly as they are, and only the TTS and
+    stitch/master stages run again.
+    """
+    payload = payload or VoiceRerunCreate()
+
+    run = session.get(Run, run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.status not in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run is {run.status}; wait for it to finish or cancel it before re-voicing",
+        )
+    # Checked directly rather than via `run_dir`, which would create the directory
+    # as a side effect of a validation check.
+    if not (Path(settings.artifacts_dir) / run.id / "dialogue_turns.json").exists():
+        raise HTTPException(status_code=400, detail="Run has no dialogue script to re-voice")
+
+    # Reassign rather than mutate: SQLAlchemy does not track in-place edits to a
+    # JSON column, so a mutated dict would never be written back.
+    config = dict(run.config_json or {})
+    if payload.voice_overrides:
+        config["voice_overrides"] = payload.voice_overrides
+    else:
+        config.pop("voice_overrides", None)  # empty body => back to automatic casting
+    run.config_json = config
+    run.status = "queued"
+    run.stage = "queued"
+    run.error = None
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    from workers.orchestrator.tasks import kickoff_voice, run_voice_pipeline_local
+
+    if kickoff_voice(run.id) == "local":
+        _run_detached(run.id, run_voice_pipeline_local)
 
     return _run_out(run)
 
@@ -112,6 +202,13 @@ def get_run(run_id: str, session: Session = Depends(get_session)) -> RunOut:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return _run_out(run)
+
+
+@app.get("/runs", response_model=list[RunOut])
+def list_runs(limit: int = 20, session: Session = Depends(get_session)) -> list[RunOut]:
+    limit = max(1, min(200, limit))
+    stmt = select(Run).order_by(Run.created_at.desc()).limit(limit)
+    return [_run_out(r) for r in session.exec(stmt).all()]
 
 
 @app.get("/runs/{run_id}/artifacts", response_model=list[ArtifactOut])
@@ -131,22 +228,26 @@ def list_artifacts(run_id: str, session: Session = Depends(get_session)) -> list
     ]
 
 
+def _resolve_artifact_path(artifact: Artifact) -> Path:
+    """Resolve an artifact path, refusing anything outside the artifacts dir."""
+    base = Path(settings.artifacts_dir).resolve()
+    target = Path(artifact.path).resolve()
+    if target != base and base not in target.parents:
+        raise HTTPException(status_code=400, detail="Artifact path outside artifacts dir")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Artifact file missing on disk")
+    return target
+
+
 @app.get("/artifacts/{artifact_id}/json")
 def read_artifact_json(artifact_id: str, session: Session = Depends(get_session)) -> Any:
     a = session.get(Artifact, artifact_id)
     if not a:
         raise HTTPException(status_code=404, detail="Artifact not found")
-
-    base = Path(settings.artifacts_dir).resolve()
-    target = Path(a.path).resolve()
-    if base not in target.parents and base != target:
-        raise HTTPException(status_code=400, detail="Artifact path outside artifacts dir")
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="Artifact file missing on disk")
-
+    target = _resolve_artifact_path(a)
     try:
         return json.loads(target.read_text(encoding="utf-8"))
-    except Exception as e:
+    except json.JSONDecodeError as e:
         raise HTTPException(status_code=400, detail=f"Artifact is not valid JSON: {e}") from e
 
 
@@ -155,20 +256,14 @@ def download_artifact_file(artifact_id: str, session: Session = Depends(get_sess
     a = session.get(Artifact, artifact_id)
     if not a:
         raise HTTPException(status_code=404, detail="Artifact not found")
+    target = _resolve_artifact_path(a)
 
-    base = Path(settings.artifacts_dir).resolve()
-    target = Path(a.path).resolve()
-    if base not in target.parents and base != target:
-        raise HTTPException(status_code=400, detail="Artifact path outside artifacts dir")
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="Artifact file missing on disk")
-
-    suffix = target.suffix.lower()
     media = {
         ".wav": "audio/wav",
         ".mp3": "audio/mpeg",
         ".json": "application/json",
-    }.get(suffix, "application/octet-stream")
+        ".mp4": "video/mp4",
+    }.get(target.suffix.lower(), "application/octet-stream")
     return FileResponse(path=str(target), media_type=media, filename=target.name)
 
 
@@ -177,59 +272,106 @@ def cancel_run(run_id: str, session: Session = Depends(get_session)) -> RunOut:
     run = session.get(Run, run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    if run.status in {"completed", "failed", "cancelled"}:
+    if run.status in TERMINAL_STATUSES:
         return _run_out(run)
+
+    # Workers check this status between stages and between turns, so the write
+    # is what actually stops the pipeline.
     run.status = "cancelled"
-    run.completed_at = datetime.utcnow()
+    run.completed_at = _utcnow()
     run.stage = "cancelled"
-    run.progress = 1.0
     session.add(run)
     session.commit()
     session.refresh(run)
+
+    from workers.orchestrator.progress import publish
+
+    publish(run_id, {"type": "run.cancelled"})
     return _run_out(run)
 
 
 @app.websocket("/ws/runs/{run_id}")
 async def ws_run_events(websocket: WebSocket, run_id: str):
     await websocket.accept()
-    # Prefer Redis pubsub if available; fall back to DB polling if not.
+    try:
+        if await _stream_from_redis(websocket, run_id):
+            return
+        await _stream_from_polling(websocket, run_id)
+    except WebSocketDisconnect:
+        return
+    except Exception as e:
+        log.debug("ws closed for run %s: %s", run_id, e)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+async def _stream_from_redis(websocket: WebSocket, run_id: str) -> bool:
+    """
+    Try the Redis pubsub stream.
+
+    Returns True if it handled the connection. The previous version wrapped the
+    whole `async for` in a try/except, so a mid-stream Redis failure silently fell
+    through to polling *after* events had already been sent. Here, once a single
+    event is delivered, a later error propagates instead of double-streaming.
+    """
+    delivered = False
     try:
         async for event in subscribe_run_events(run_id):
+            delivered = True
             await websocket.send_json(event)
-        return
-    except Exception:
-        pass
+            if event.get("type") in {"run.completed", "run.failed", "run.cancelled"}:
+                await websocket.close()
+                return True
+        return delivered
+    except WebSocketDisconnect:
+        raise
+    except Exception as e:
+        if delivered:
+            raise
+        log.debug("redis events unavailable for run %s (%s); polling instead", run_id, e)
+        return False
 
-    last_stage = None
-    last_progress = None
+
+async def _stream_from_polling(websocket: WebSocket, run_id: str) -> None:
+    last: tuple[str, str, float] | None = None
     while True:
-        try:
-            with Session(engine) as session:
-                run = session.get(Run, run_id)
-                if not run:
-                    await websocket.send_json({"type": "error", "message": "Run not found"})
-                    await websocket.close()
-                    return
-                if run.stage != last_stage or run.progress != last_progress:
-                    last_stage, last_progress = run.stage, run.progress
-                    await websocket.send_json(
-                        {
-                            "type": "run.poll",
-                            "run_id": run.id,
-                            "status": run.status,
-                            "stage": run.stage,
-                            "progress": run.progress,
-                            "error": run.error,
-                        }
-                    )
-                if run.status in {"completed", "failed", "cancelled"}:
-                    await websocket.close()
-                    return
-        except Exception as e:
-            await websocket.send_json({"type": "error", "message": str(e)})
+        with Session(engine) as session:
+            run = session.get(Run, run_id)
+            if not run:
+                await websocket.send_json({"type": "error", "message": "Run not found"})
+                await websocket.close()
+                return
+            snapshot = (run.status, run.stage, run.progress)
+            payload = {
+                "type": "run.poll",
+                "run_id": run.id,
+                "status": run.status,
+                "stage": run.stage,
+                "progress": run.progress,
+                "error": run.error,
+            }
+            terminal = run.status in TERMINAL_STATUSES
+
+        if snapshot != last:
+            last = snapshot
+            await websocket.send_json(payload)
+        if terminal:
             await websocket.close()
             return
         await anyio.sleep(0.5)
+
+
+def _project_out(p: Project) -> ProjectOut:
+    return ProjectOut(
+        id=p.id,
+        name=p.name,
+        niche=p.niche,
+        brand_profile=p.brand_profile_json,
+        defaults=p.defaults_json,
+        created_at=p.created_at,
+    )
 
 
 def _run_out(run: Run) -> RunOut:
@@ -245,4 +387,3 @@ def _run_out(run: Run) -> RunOut:
         error=run.error,
         config=run.config_json,
     )
-

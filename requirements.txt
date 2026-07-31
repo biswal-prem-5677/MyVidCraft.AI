@@ -2,9 +2,17 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.7.0
 pydantic-settings>=2.3.0
+python-dotenv>=1.0.0
 sqlmodel>=0.0.22
 celery>=5.4.0
 redis>=5.0.0
 python-multipart>=0.0.9
-pyttsx3>=2.90
 
+# LLM (Phase 1 brain + script engines). Optional at runtime: without an API key
+# the engines fall back to the deterministic template generator.
+anthropic>=0.120.0
+
+# Offline TTS (Phase 2). pywin32 supplies `pythoncom` for per-thread COM init,
+# which SAPI requires when synthesis runs off the main thread.
+pyttsx3>=2.90
+pywin32>=306; sys_platform == "win32"
