@@ -114,20 +114,32 @@ composed video, async with live progress.
 
 ---
 
-### Gate 1 — Deployable 🔵 CURRENT
+### Gate 1 — Deployable 🔵 CURRENT — code complete, awaiting the listen test
 
 **Objective:** the pipeline runs somewhere that is not this Windows laptop.
 
-| Deliverable | Why |
-|---|---|
-| HTTP TTS backend registered via `SpeechEngine` | Removes the Windows/COM lock |
-| `pyttsx3` + `pywin32` deleted from requirements | The blocker itself |
-| Dockerfile + docker-compose (api, worker, redis, postgres) | No deploy artifacts exist today |
-| Postgres + **Alembic** migrations | SQLite is single-writer; no migrations = data loss on any schema change |
-| GitHub Actions CI running the suite | 248 tests currently run only when remembered |
+| Deliverable | Why | State |
+|---|---|---|
+| HTTP TTS backend registered via `SpeechEngine` | Removes the Windows/COM lock | ✅ `openai_tts.py` |
+| `pyttsx3` + `pywin32` deleted from requirements | The blocker itself | ✅ deleted |
+| Dockerfile + docker-compose (api, worker, redis, postgres) | No deploy artifacts existed | ✅ written, **build unverified locally** |
+| Postgres + **Alembic** migrations | SQLite is single-writer; no migrations = data loss on any schema change | ✅ + drift test |
+| GitHub Actions CI running the suite | The suite ran only when remembered | ✅ 3 jobs |
 
-**Success:** `docker compose up` on Linux produces a complete episode. CI green on
-push. Two runs execute concurrently without locking.
+**Success criteria:**
+
+| Criterion | State |
+|---|---|
+| Two runs execute concurrently without locking | ✅ verified — `tests/test_concurrent_runs.py` |
+| CI green on push | ⏳ unverified — repo is private, no `gh` on this machine |
+| `docker compose up` on Linux produces a complete episode | ⏳ unverified — Docker not installed here; CI builds and boots the image, but does not render an episode |
+
+**Found while doing this work:** a real concurrency crash, not a test artifact.
+`@celery_app.task` returns a `PromiseProxy` that resolves lazily and not
+thread-safely, so two runs starting at once could leave one holding a half-bound
+task and die in `push_request` with `AttributeError: 'NoneType' object has no
+attribute 'push'`. Reachable in production via `_run_detached` whenever the
+broker is down. Fixed by finalising the app at import.
 
 **Go/No-Go — the honest one:**
 > Generate one episode with the new TTS. **Listen to it.** Would you publish it
@@ -244,10 +256,27 @@ not spent.
 | Gate | State | Blocking |
 |---|---|---|
 | 0 — Baseline | ✅ Complete | — |
-| **1 — Deployable** | 🔵 **Current** | HTTP TTS backend not yet built |
-| 2 — Usable by a stranger | ⚪ Blocked | Gate 1 |
+| **1 — Deployable** | 🔵 **Code complete** | The listen test — needs a TTS key and a Docker host |
+| 2 — Usable by a stranger | ⚪ Blocked | Gate 1 go/no-go |
 | 3 — Worth paying for | ⚪ Blocked | Gate 2 |
 | 4 — Expand (clips) | ⚪ Blocked | Gate 3 |
+
+**To close Gate 1** (needs a machine with Docker and an API key — neither is
+available to the agent):
+
+```bash
+export MYVIDCRAFT_OPENAI_API_KEY=sk-...      # required; no offline fallback
+export MYVIDCRAFT_ANTHROPIC_API_KEY=sk-...   # optional; templates without it
+docker compose up --build
+
+curl -X POST localhost:8000/projects -H 'content-type: application/json' \
+  -d '{"name":"Test","niche":"AI productivity","brand_profile":{"tone":"confident"},"defaults":{}}'
+curl -X POST localhost:8000/projects/<id>/runs -H 'content-type: application/json' \
+  -d '{"mode":"teaching","platforms":["youtube"],"language":"en","config":{}}'
+curl localhost:8000/runs/<run_id>/artifacts     # then download episode.wav
+```
+
+Then answer the go/no-go: **would you publish that audio under your own name?**
 
 **Destination check:**
 

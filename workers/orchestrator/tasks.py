@@ -855,6 +855,24 @@ def start_video_pipeline(run_id: str):
     return run_id
 
 
+# Resolve every task now, on the importing thread.
+#
+# `@celery_app.task` returns a PromiseProxy, not a Task: creation is deferred
+# until the app is finalized. The proxy resolves on first use, and that
+# resolution is not thread-safe — two threads touching the same unresolved task
+# at once can leave one of them holding a half-bound Task whose `request_stack`
+# is still None, which then dies inside `push_request` as:
+#
+#     AttributeError: 'NoneType' object has no attribute 'push'
+#
+# That is reachable in production, not just in tests. `_run_detached` starts a
+# thread per run whenever the broker is unreachable, so two users starting runs
+# at the same moment could crash one of them with an error naming nothing that
+# appears in this codebase. Finalising here costs one call at import and makes
+# the whole race impossible.
+celery_app.finalize()
+
+
 def _run_stages_local(run_id: str, stages) -> str:
     """
     Run stages synchronously in-process.
