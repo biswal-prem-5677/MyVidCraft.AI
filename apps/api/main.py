@@ -49,10 +49,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MyVidCraft.ai API", version="0.2.0", lifespan=lifespan)
 
+if not settings.cors_allow_credentials:
+    log.warning(
+        "CORS origin is '*', so credentialed cross-origin requests are disabled. "
+        "Set MYVIDCRAFT_CORS_ORIGINS to explicit origins to re-enable them."
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=settings.cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -8,6 +8,35 @@ class Settings(BaseSettings):
     artifacts_dir: str = "./data/artifacts"
     redis_url: str = "redis://localhost:6379/0"
 
+    # --- HTTP ---
+    # Comma-separated allowed browser origins, not a JSON list: this is read from
+    # an env var far more often than from code, and `a,b` is what a person types.
+    #
+    # The default is the local web UI and nothing else. It is deliberately not
+    # `*`: the CORS spec forbids pairing a wildcard origin with credentials, so
+    # that combination is invalid rather than merely permissive, and browsers
+    # reject it. `cors_origin_list` downgrades a wildcard instead of shipping the
+    # invalid pair — see the note there. Add real deployment origins here.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Parsed `cors_origins`. Empty entries are dropped so a trailing comma is harmless."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @property
+    def cors_allow_credentials(self) -> bool:
+        """
+        False when any origin is `*`.
+
+        Credentials plus a wildcard is the one combination the spec rules out,
+        and Starlette resolves it by quietly echoing the request origin back —
+        which is strictly worse than a wildcard, because it makes *every* site a
+        permitted credentialed origin. Dropping credentials keeps the wildcard
+        meaning what whoever set it thought it meant.
+        """
+        return "*" not in self.cors_origin_list
+
     # --- LLM (Phase 1 script/brain engines) ---
     # Empty api key => engines fall back to the deterministic template generator,
     # so a run always completes even with no credentials configured.

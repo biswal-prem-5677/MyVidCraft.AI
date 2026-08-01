@@ -201,7 +201,7 @@ this is what that abstraction was for); Postgres JSON column differences.
 |---|---|
 | Auth (Clerk or Supabase — **buy, per R6**) | No accounts exist |
 | `owner` on Project + authz on every endpoint | Any caller can read any artifact today |
-| Fix CORS (`allow_origins=["*"]` + credentials is invalid) | `main.py:52-58` |
+| ~~Fix CORS (`allow_origins=["*"]` + credentials is invalid)~~ | ✅ **done early** — see the amendment log |
 | Rate limiting | No auth + no limits + LLM calls = unbounded cost exposure |
 | Object storage (R2/S3) | Artifacts currently die with the container |
 | Run history UI | `GET /runs` exists; the UI ignores it |
@@ -357,4 +357,6 @@ Appendix A):
 | 2026-08-01 | Created | Replace phase-ordering with gate-ordering, so scope is bounded by user-reachability rather than by feature ambition |
 | 2026-08-01 | Added a second, free speech engine (`edge`) | The Gate 1 go/no-go required a funded API account, which blocked the gate indefinitely. R6 says buy commodities — but a commodity you cannot afford stalls the ladder, and the seam makes a second registration nearly free. Not the default, and explicitly not billable. |
 | 2026-08-01 | Added the web UI to the container stack | Compose brought up an API with no way to reach it, which fails R3: a capability a stranger with a browser cannot use is not built. |
+| 2026-08-01 | Fixed the CORS misconfiguration, out of gate order | A deliberate, narrow R2 deviation, recorded rather than quietly taken. `allow_origins=["*"]` with `allow_credentials=True` is not permissive-but-working, it is *invalid*, and Starlette resolves it by echoing any origin back — strictly worse than a wildcard. It was a Critical review finding (§8, A05), it is a correction to broken configuration rather than new capability (so R3 is untouched), and it is ~10 lines plus tests. Deferring a security defect behind an unrelated go/no-go had no upside. Gate 2 still does not start. |
+| 2026-08-01 | Added `docs/HUMAN_TASKS.md` and `scripts/verify_gate1.py` | The gate kept stalling on tasks nobody had written down as needing a human. HUMAN_TASKS.md separates "blocked on a person" from "not built yet, correctly sequenced", so the difference between forgotten and decided is visible. The script collapses the Docker criterion to one command. |
 | 2026-08-01 | Recorded the Gate 1 verification run | R4 says nothing ships un-run. The pipeline had been tested but never executed end to end on the free engine, so "code complete" was resting on the suite alone. It has now produced a real 6-minute episode; the measurements are in §4. The go/no-go answer is still absent on purpose (R5) — no one has listened yet. |

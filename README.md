@@ -9,6 +9,11 @@ async run you can watch stage by stage.
 Progress is tracked as **gates**, not phases. Each gate ends in a go/no-go
 decision, and the ladder lives in [`docs/EXECUTION_RULES.md`](docs/EXECUTION_RULES.md).
 
+> **Start here:** [`docs/HUMAN_TASKS.md`](docs/HUMAN_TASKS.md) is the list of
+> things that need *you* — a card, a login, an install, or a judgment call.
+> Everything that could be done without you already has been. Right now it is
+> one six-minute task, and it is blocking the entire project.
+
 | Gate | Meaning | State |
 |---|---|---|
 | 0 — Baseline | Pipeline runs end to end on one machine | ✅ Complete |
@@ -163,6 +168,19 @@ docker compose up --build
 Migrations run as a one-shot `migrate` service, not from the API's entrypoint —
 two API replicas would otherwise race to alter the same schema on every deploy.
 
+To check the stack actually produces an episode rather than merely booting:
+
+```bash
+docker compose up --build -d
+python scripts/verify_gate1.py
+```
+
+Stdlib only, so it also runs against a remote deployment from a machine with
+none of this project's dependencies installed. It renders a full episode,
+verifies the artifacts exist, confirms the audio is neither silent nor
+truncated, saves the WAV for you to listen to, and exits non-zero on any
+failure. `--run-id <id>` re-checks an existing run without generating another.
+
 ## Regenerating without starting over
 
 Once a run has finished, two operations re-render part of it cheaply:
@@ -189,7 +207,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-307 tests. They run against a temporary database and artifacts directory and
+313 tests. They run against a temporary database and artifacts directory and
 never call an LLM, a broker, a speech endpoint or FFmpeg. The FFmpeg encode and
 mux tests skip themselves when FFmpeg is absent — CI installs it and **fails if
 those tests skip**, so a green CI run never hides them.
@@ -210,10 +228,12 @@ against a real Postgres, asserts the schema exists, and boots the API and the UI
 | `packages/core/` | Stage definitions, schemas, shared types |
 | `packages/prompts/` | Versioned prompt templates |
 | `infra/migrations/` | Alembic revisions |
-| `docs/` | Execution rules, architecture, plan, engineering review |
+| `scripts/` | `verify_gate1.py` — drives a running stack and checks it produced a real episode |
+| `docs/` | Human task list, execution rules, architecture, plan, engineering review |
 
-Start with [`docs/EXECUTION_RULES.md`](docs/EXECUTION_RULES.md) for what is being
-built and why, then [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the seams.
+Start with [`docs/HUMAN_TASKS.md`](docs/HUMAN_TASKS.md) for what needs you, then
+[`docs/EXECUTION_RULES.md`](docs/EXECUTION_RULES.md) for what is being built and
+why, then [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the seams.
 [`docs/ENGINEERING_REVIEW.md`](docs/ENGINEERING_REVIEW.md) is an independent
 review of the repo — deliberately unflattering, and the reason the gate ladder
 exists.
