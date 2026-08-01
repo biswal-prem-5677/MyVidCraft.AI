@@ -4,10 +4,21 @@ Everything in this repository that can be done without you has been done. This
 file is the remainder — the tasks that need a human, a credit card, a browser
 login, or a judgment call about your own reputation.
 
-**How to use this file.** Work top to bottom. §1 is the only thing blocking the
-project *right now*; §2 unlocks more automation; §3 and §4 are deliberately
-parked until §1 is answered, and parking them is a decision, not an oversight.
-Each task says what it blocks and why nobody else can do it.
+**How to use this file.** Work top to bottom.
+
+| § | | |
+|---|---|---|
+| **1** | The listen test | **The only thing blocking the project right now.** Six minutes. |
+| **2** | Small tasks that unlock more automation | Worth doing today; each removes a permanent blind spot. |
+| **3** | Accounts and money | **Do not buy yet.** Parked behind §1 on purpose. |
+| **4** | Decisions only you can make | Includes the largest one: which product this actually is. |
+| **5** | Legal and compliance | Needed before real users, not before §1. |
+| **6** | Deliberately not being built | So you can tell *forgotten* from *decided*. |
+| **7** | Known gaps **not** waiting on you | Ordinary work, correctly sequenced. Listed so this is not mistaken for the full defect list. |
+| **8** | Already handled | The boundary of what got done without you. |
+
+Each task says what it blocks and why nobody else can do it. Where something is
+parked, that is a decision, not an oversight, and the reason is stated.
 
 **Status:** last reconciled 2026-08-01 against `main`. Test suite green
 (311 passed, 2 skipped by design). Nothing is committed-but-unpushed.
@@ -50,7 +61,7 @@ through. One week spent learning this beats six months.
 
 | Answer | Do this |
 |---|---|
-| **Yes** | Record it in `docs/EXECUTION_RULES.md` §7, then §2 and §3 of this file open up. |
+| **Yes** | Record it in `docs/EXECUTION_RULES.md` §7. §3 onward then opens up — and §4.1 becomes the next real decision, not a hypothetical one. |
 | **No** | Stop. Do not start Gate 2. Write down *what specifically* fell short — voice, script, pacing, or mix — because that determines whether this is fixable with a better TTS vendor or is a product-level dead end. |
 
 A *no* is a legitimate, useful outcome. The gate exists to make stopping
@@ -141,6 +152,8 @@ the listen test comes back *no*.
 | 3.4 | **Deployment host** — Fly / Railway / Render | Signup, billing | ~$5–20/mo to start | The "not this laptop" half of the Destination. |
 | 3.5 | **Stripe account** | Identity + bank verification, takes days | 2.9% + 30¢ | Gate 3. Start the verification early — it is the slowest item here. |
 | 3.6 | **Domain name** | Purchase | ~$12/yr | Nothing technical; needed before real users. |
+| 3.7 | **Sentry** (error monitoring) | Signup | Free tier is enough | Review §13: there is no monitoring of any kind today. Listed SHOULD in the MVP set. |
+| 3.8 | **Transactional email** — Resend or Postmark | Signup, domain DNS verification | Free tier to start | Password resets, receipts. Review §12 lists it as required-but-absent. Needed the moment auth exists. |
 
 Once you have any of these keys, put them in `.env` (never commit it) and the
 code paths are already written and tested for 3.1. The rest need building, and
@@ -150,21 +163,66 @@ that building is Gate 2 work that should not start yet.
 
 ## 4. Decisions only you can make
 
-These are recorded in `ENGINEERING_REVIEW.md` Appendix A as open. They are not
-blocking today, but each one changes what gets built, so guessing at them would
-be worse than leaving them open.
+### 4.1 The big one — which product is this? (`ENGINEERING_REVIEW.md` §18)
+
+The review's central recommendation is not a bug fix, it is a **scope decision**,
+and it is the largest single thing on this list. Its final verdict was *"we would
+not approve continued development on the plan as written."* Three paths:
+
+| Path | What it means | Review's assessment |
+|---|---|---|
+| **A. Narrow to audio** | AI *podcast episodes* from a niche. **Drop video entirely.** | ✅ **Recommended.** Uses ~80% of what is built, removes both blockers, and audio is where the pipeline is genuinely strongest. |
+| **B. Pivot to the Brain** | Sell content *strategy* — calendars, hooks, topic slates. No media generation. | 🟡 Viable and cheaper, smaller market. |
+| **C. Continue as planned** | Full avatar video product. | 🔴 Not recommended without funding and a media-ML hire. |
+
+**Why this is yours and why it is here.** It is a bet about what you want to
+build and sell, not a technical judgment. It also interacts directly with §1:
+Path A says the audio *is* the product, which makes the listen test not merely a
+gate but effectively the whole product test. If you are leaning Path A, judge
+that WAV harder, not more leniently.
+
+Nothing in the repo assumes an answer, and the engine seams mean all three paths
+remain open today. That stays true for now, but it stops being free once Gate 2
+work starts building a product layer around one of them.
+
+### 4.2 Everything else
+
+Recorded in `ENGINEERING_REVIEW.md` Appendix A as open. Not blocking today, but
+each changes what gets built, so guessing would be worse than leaving them open.
 
 | # | Question | Why it matters |
 |---|---|---|
-| 4.1 | **Is lip sync negotiable?** | If it is a hard requirement, the timeline roughly triples and it needs a media-ML hire. It is currently in the scope freeze as "buy via API if users ask." Answer changes the whole roadmap. |
-| 4.2 | **Deployment target — Linux/container confirmed?** | Everything assumes it. If Windows hosting is required instead, the container work needs revisiting. |
-| 4.3 | **Has anyone who would pay been interviewed?** | The review flags this as the biggest untested assumption in the project. Zero code fixes a category that does not want this. |
-| 4.4 | **What is the runway?** | Solo-with-savings and funded-team are genuinely different verdicts on whether to continue after Gate 1. |
-| 4.5 | **Recruit 5 external testers** | Gate 2's success criterion is *5 strangers complete signup → generate → download unaided*. Start thinking about who; you cannot be any of them. |
+| 4.2.1 | **Is lip sync negotiable?** | If it is a hard requirement, the timeline roughly triples and it needs a media-ML hire. Currently in the scope freeze as "buy via API if users ask." Note Path A deletes this question entirely. |
+| 4.2.2 | **Deployment target — Linux/container confirmed?** | Everything assumes it. If Windows hosting is required instead, the container work needs revisiting. |
+| 4.2.3 | **Has anyone who would pay been interviewed?** | The review flags this as the biggest untested assumption in the project. No amount of code fixes a category that does not want this. |
+| 4.2.4 | **What is the runway?** | Solo-with-savings and funded-team are genuinely different verdicts on whether to continue after Gate 1. |
+| 4.2.5 | **Recruit 5 external testers** | Gate 2's success criterion is *5 strangers complete signup → generate → download unaided*. Start thinking about who; you cannot be any of them. |
+| 4.2.6 | **Bus factor** | Risk #17. Solo project, no second maintainer. Not fixable by code; worth deciding whether it is acceptable. |
 
 ---
 
-## 5. What is deliberately NOT being done
+## 5. Legal and compliance — before real users, not before Gate 1
+
+`ENGINEERING_REVIEW.md` §16 rates these **High** and notes that founders
+routinely underweight them. None of it is code; all of it needs you, and some of
+it needs a lawyer. Nothing here blocks the listen test — but all of it blocks
+putting the product in front of paying strangers.
+
+| # | Item | Why only you |
+|---|---|---|
+| 5.1 | **Terms of Service + Privacy Policy** | Required before you accept a single signup. Template services exist; a real lawyer is better if money is changing hands. |
+| 5.2 | **Synthetic-content disclosure** | The EU AI Act imposes transparency obligations on synthetic media, and most platforms now require disclosure of AI-generated content. Decide what the product tells users to disclose, and what it discloses itself. |
+| 5.3 | **Defamation exposure in generated content** | The Brain generates *"X is lying to you about Y"* hook templates. Pointed at a **named real person**, that is a defamation vector originating in your product. This one is a *product* decision — whether to constrain those templates — and it is worth making before users, not after a complaint. |
+| 5.4 | **GDPR: deletion and export** | No account deletion or data export exists. Becomes a legal obligation the moment you have EU users. The engineering is small; the decision that it is required is yours. |
+| 5.5 | **Voice-cloning consent flow** | Only if you ever un-freeze voice cloning. Several US states have right-of-publicity statutes covering synthetic voice. Shipping it without documented consent capture is, in the review's words, one complaint away from a serious problem. Currently in the scope freeze — keep it there until this exists. |
+
+**Deliberate:** yes, all of it. These are correctly sequenced *after* the Gate 1
+go/no-go, because a *no* means none of them are ever needed. Do not spend money
+on a lawyer this week.
+
+---
+
+## 6. What is deliberately NOT being done
 
 So you can tell "forgotten" from "decided". Full list and reasoning in
 `EXECUTION_RULES.md` §5.
@@ -184,7 +242,7 @@ Adding anything to this list, or removing it, requires editing
 
 ---
 
-## 6. Known gaps that are NOT waiting on you
+## 7. Known gaps that are NOT waiting on you
 
 Listed so this file is not mistaken for the complete defect list. These need no
 account, no card and no decision — they are ordinary work, correctly sequenced
@@ -210,7 +268,7 @@ security and product findings still stand.
 
 ---
 
-## 7. What was done for you, needing no action
+## 8. What was done for you, needing no action
 
 For completeness, so you can see the boundary of what got handled automatically:
 
