@@ -43,11 +43,33 @@ def _prepare_sqlite(db_url: str) -> None:
             return
 
 
+def _engine_kwargs(db_url: str) -> dict:
+    """
+    Per-backend engine options.
+
+    SQLite needs `check_same_thread=False` because runs execute in detached
+    worker threads (`_run_detached`) that are not the thread which opened the
+    connection. Postgres needs `pool_pre_ping`, or a connection killed by an idle
+    timeout is handed to a task and fails on first use.
+    """
+    if db_url.startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}}
+    return {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
+
+
 _prepare_sqlite(settings.database_url)
-engine = create_engine(settings.database_url, echo=False)
+engine = create_engine(settings.database_url, echo=False, **_engine_kwargs(settings.database_url))
 
 
 def create_db_and_tables() -> None:
+    """
+    Create any missing tables.
+
+    Kept for tests and first-run convenience. It is NOT the migration path:
+    `create_all` only ever adds, so a column that changed type or a table that
+    gained a constraint stays stale and silently wrong. Schema changes go through
+    Alembic (`alembic upgrade head`) — see `infra/README.md`.
+    """
     SQLModel.metadata.create_all(engine)
 
 

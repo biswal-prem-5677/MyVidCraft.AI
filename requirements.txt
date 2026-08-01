@@ -5,6 +5,12 @@ pydantic>=2.7.0
 pydantic-settings>=2.14.2
 python-dotenv>=1.0.0
 sqlmodel>=0.0.22
+# Schema migrations. `create_all` only ever adds columns, so it cannot carry a
+# type change or a new constraint to a database that already exists.
+alembic>=1.13.0
+# Postgres driver. SQLite stays the default for local dev and tests; it is a
+# single-writer database and cannot serve concurrent runs.
+psycopg2-binary>=2.9.9
 celery>=5.4.0
 redis>=5.0.0
 # 0.0.31 fixes a set of parser DoS advisories (GHSA-5rvq-cxj2-64vf and others).
