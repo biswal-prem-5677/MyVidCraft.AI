@@ -132,8 +132,31 @@ composed video, async with live progress.
 | Criterion | State |
 |---|---|
 | Two runs execute concurrently without locking | ✅ verified — `tests/test_concurrent_runs.py` |
+| A complete episode renders on the free engine | ✅ verified 2026-08-01 — see the run record below |
 | CI green on push | ⏳ unverified — repo is private, no `gh` on this machine |
 | `docker compose up` on Linux produces a complete episode | ⏳ unverified — Docker not installed here; CI builds and boots both images, but does not render an episode |
+
+**The verification run (2026-08-01).** Run `6d038b2c`, niche *AI productivity
+for solo founders*, executed against the real API on the in-process fallback
+(no broker), `MYVIDCRAFT_TTS_ENGINE=edge`, script stages on real
+`claude-opus-5`. All five stages completed.
+
+| Measured | Value |
+|---|---|
+| Episode | 5:59.8, 46 turns, two voices cast (Andrew + Ava) |
+| `episode.wav` | 24 kHz mono `pcm_s16le`; −19.2 LUFS integrated, LRA 3.9 LU |
+| `episode.mp4` | h264 1280×720 25fps + aac, duration matching the WAV exactly |
+| Also produced | `episode.mp3`, `captions.srt`, storyboard, timeline, per-turn WAVs |
+| Wall clock | 6.2 min for a 6.0 min episode — ≈1.03× realtime |
+| Silence audit | one gap >1.5s across 46 turns (1.54s at 81.9s) — a beat, not a hole |
+
+Two notes for whoever answers the go/no-go. The −19.2 LUFS is the documented
+design, not a defect: `normalize.py` does RMS normalisation to −20 dBFS with a
+true-peak ceiling and says so — it is deliberately not R128 gating. It is also
+~3 LU quieter than the podcast convention of −16 LUFS, so judge the *voice*, not
+the level. And the free engine held for 46 consecutive turns without a 403,
+which is evidence it works, not evidence it is dependable — that is exactly why
+it is not the shipping default.
 
 **The go/no-go is now answerable without money.** It previously required an
 OpenAI account with a payment method, which stalled the gate. `edge_tts.py`
@@ -158,6 +181,12 @@ broker is down. Fixed by finalising the app at import.
 > **No → STOP.** Do not proceed to Gate 2. The product's core output is not
 > viable and no downstream work fixes that. One week spent learning this beats
 > six months.
+
+**The episode to judge now exists** —
+`data/artifacts/6d038b2c-9282-4911-bd03-6460018631bf/episode.wav` (or
+`.mp3`/`.mp4`). Everything mechanical is verified; the only thing standing
+between this gate and a decision is a person playing that file. Per R5 the
+answer is deliberately **not** recorded here yet, because nobody has listened.
 
 **Risks:** hidden COM coupling (the `SpeechEngine` protocol should contain it —
 this is what that abstraction was for); Postgres JSON column differences.
@@ -266,13 +295,20 @@ not spent.
 | Gate | State | Blocking |
 |---|---|---|
 | 0 — Baseline | ✅ Complete | — |
-| **1 — Deployable** | 🔵 **Code complete** | The listen test — now runnable for free; and a Docker host |
+| **1 — Deployable** | 🔵 **Episode rendered; awaiting the listen** | A person to play `episode.wav` and answer; and a Docker host |
 | 2 — Usable by a stranger | ⚪ Blocked | Gate 1 go/no-go |
 | 3 — Worth paying for | ⚪ Blocked | Gate 2 |
 | 4 — Expand (clips) | ⚪ Blocked | Gate 3 |
 
-**To close Gate 1** (the listen test no longer needs a paid key; the container
-check still needs Docker, which is not installed on this machine):
+**To close Gate 1.** The episode has been rendered — the steps below are only
+needed to make another one. To answer the go/no-go, play the existing file:
+
+```
+data/artifacts/6d038b2c-9282-4911-bd03-6460018631bf/episode.wav
+```
+
+To render a fresh one (the container check still needs Docker, which is not
+installed on this machine):
 
 ```bash
 # Free path — no account, no card. FFmpeg required for this engine.
@@ -321,3 +357,4 @@ Appendix A):
 | 2026-08-01 | Created | Replace phase-ordering with gate-ordering, so scope is bounded by user-reachability rather than by feature ambition |
 | 2026-08-01 | Added a second, free speech engine (`edge`) | The Gate 1 go/no-go required a funded API account, which blocked the gate indefinitely. R6 says buy commodities — but a commodity you cannot afford stalls the ladder, and the seam makes a second registration nearly free. Not the default, and explicitly not billable. |
 | 2026-08-01 | Added the web UI to the container stack | Compose brought up an API with no way to reach it, which fails R3: a capability a stranger with a browser cannot use is not built. |
+| 2026-08-01 | Recorded the Gate 1 verification run | R4 says nothing ships un-run. The pipeline had been tested but never executed end to end on the free engine, so "code complete" was resting on the suite alone. It has now produced a real 6-minute episode; the measurements are in §4. The go/no-go answer is still absent on purpose (R5) — no one has listened yet. |

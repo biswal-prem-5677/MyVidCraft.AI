@@ -12,7 +12,7 @@ decision, and the ladder lives in [`docs/EXECUTION_RULES.md`](docs/EXECUTION_RUL
 | Gate | Meaning | State |
 |---|---|---|
 | 0 — Baseline | Pipeline runs end to end on one machine | ✅ Complete |
-| **1 — Deployable** | Runs somewhere that is not the author's laptop | 🔵 **Current** — code complete, awaiting the listen test |
+| **1 — Deployable** | Runs somewhere that is not the author's laptop | 🔵 **Current** — episode rendered, awaiting the listen test |
 | 2 — Usable by a stranger | Auth, ownership, run history, rate limiting | ⚪ Blocked |
 | 3 — Worth paying for | Billing, unit-cost metrics, retention | ⚪ Blocked |
 | 4 — Expand | Whisper transcripts, clip engine | ⚪ Blocked |
@@ -130,6 +130,13 @@ When it completes, the **Artifacts** card gives `episode.wav` an inline player.
 Play it. That is the Gate 1 go/no-go: *would you publish this under your own
 name?*
 
+One such episode has already been generated and measured — 6 minutes, 46 turns,
+two voices, on the free engine with a real LLM script. It is checked into
+neither git nor the docs, but it is on disk at
+`data/artifacts/6d038b2c-9282-4911-bd03-6460018631bf/episode.wav`, and
+`docs/EXECUTION_RULES.md` §4 records what was measured from it. Nobody has
+answered the go/no-go yet.
+
 To run a worker instead of the in-process fallback:
 
 ```powershell
@@ -182,7 +189,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-302 tests. They run against a temporary database and artifacts directory and
+307 tests. They run against a temporary database and artifacts directory and
 never call an LLM, a broker, a speech endpoint or FFmpeg. The FFmpeg encode and
 mux tests skip themselves when FFmpeg is absent — CI installs it and **fails if
 those tests skip**, so a green CI run never hides them.
