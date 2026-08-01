@@ -1,0 +1,154 @@
+name: CI
+
+# The suite existed for months and ran only when someone remembered. This is the
+# job that makes it non-optional.
+#
+# It also carries the only real verification of the container work: the
+# Dockerfile and compose stack are developed on Windows, where Docker may not be
+# installed at all, so "it builds and boots on Linux" is a claim that can only be
+# checked here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push makes an in-flight run obsolete; cancel rather than queue.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.13 is what the image ships. 3.12 catches accidental use of
+        # 3.13-only syntax, which would fail only at deploy time otherwise.
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # The media stack treats FFmpeg as optional and degrades without it, so
+      # the suite passes either way — but several encode/mux tests skip when it
+      # is absent, and a CI run that silently skips them is not a CI run.
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests
+        # `-rs` reports skip reasons so the guard below can read them from the
+        # same run rather than executing the whole suite a second time.
+        run: |
+          set -o pipefail
+          pytest -q -rs 2>&1 | tee /tmp/pytest.txt
+
+      - name: Fail if FFmpeg tests skipped despite FFmpeg being installed
+        # A broken or unfound FFmpeg shows up as skips, not failures, so the run
+        # would otherwise look green while five media tests never executed.
+        run: |
+          if grep -qi "ffmpeg not" /tmp/pytest.txt; then
+            echo "::error::FFmpeg-dependent tests skipped despite FFmpeg being installed"
+            grep -i "ffmpeg not" /tmp/pytest.txt
+            exit 1
+          fi
+
+  linux-import:
+    name: imports cleanly on linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install runtime dependencies only
+        # requirements.txt, not -dev: this proves the production dependency set
+        # resolves on Linux. The Windows TTS stack used to make that impossible.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Import the API and the worker
+        run: |
+          python -c "import apps.api.main; print('api ok')"
+          python -c "from workers.orchestrator.celery_app import app; print('worker ok')"
+          python -c "from workers.media.tts.registry import get_engine, available_engines; print('tts engines:', available_engines())"
+
+  docker:
+    name: image builds and boots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: myvidcraft:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Migrations run against a real Postgres
+        run: |
+          docker network create ci-net
+          docker run -d --name pg --network ci-net \
+            -e POSTGRES_USER=myvidcraft -e POSTGRES_PASSWORD=myvidcraft -e POSTGRES_DB=myvidcraft \
+            postgres:16-alpine
+          for i in $(seq 1 30); do
+            docker exec pg pg_isready -U myvidcraft -d myvidcraft && break
+            sleep 2
+          done
+          docker run --rm --network ci-net \
+            -e MYVIDCRAFT_DATABASE_URL=postgresql+psycopg2://myvidcraft:myvidcraft@pg:5432/myvidcraft \
+            myvidcraft:ci alembic upgrade head
+
+      - name: Schema is actually present
+        # `alembic upgrade` exiting 0 is not proof the tables exist — a mistyped
+        # target or an empty chain also exits 0.
+        run: |
+          docker exec pg psql -U myvidcraft -d myvidcraft -c '\dt' | tee /tmp/tables.txt
+          for t in project run artifact; do
+            grep -qw "$t" /tmp/tables.txt || { echo "::error::table $t missing"; exit 1; }
+          done
+
+      - name: API boots and answers /health
+        run: |
+          docker run -d --name api --network ci-net -p 8000:8000 \
+            -e MYVIDCRAFT_DATABASE_URL=postgresql+psycopg2://myvidcraft:myvidcraft@pg:5432/myvidcraft \
+            myvidcraft:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:8000/health && break
+            sleep 2
+          done
+          curl -fsS http://localhost:8000/health | tee /tmp/health.json
+          python -c "
+          import json
+          h = json.load(open('/tmp/health.json'))
+          assert h['status'] == 'ok', h
+          assert h['ffmpeg'] is True, 'image must ship ffmpeg'
+          assert h['tts_engine'] == 'openai', h
+          print('health ok:', h)
+          "
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs api || true

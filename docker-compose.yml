@@ -1,0 +1,107 @@
+# The whole stack, on Linux, from one command.
+#
+# This file is the proof that the deployment blocker is gone: before the TTS
+# swap, no compose file could have existed, because the voice stage needed
+# Windows COM and would have failed inside any container.
+#
+#   docker compose up --build
+#   -> API on :8000, web-less; POST a run and watch /ws/runs/{id}
+#
+# Postgres rather than SQLite here deliberately. SQLite is fine for tests and a
+# single developer, but it is single-writer, so two concurrent runs serialise on
+# it — which is exactly what this stack exists to stop doing.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: myvidcraft
+      POSTGRES_PASSWORD: myvidcraft
+      POSTGRES_DB: myvidcraft
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` returns success while the server is still starting up in
+      # some images, so the user/db are named explicitly to force a real check.
+      test: ["CMD-SHELL", "pg_isready -U myvidcraft -d myvidcraft"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Migrations run in their own one-shot service rather than in the API's
+  # entrypoint. With two API replicas, an entrypoint migration means two
+  # processes racing to alter the same schema on every deploy.
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment: &app_env
+      MYVIDCRAFT_DATABASE_URL: postgresql+psycopg2://myvidcraft:myvidcraft@db:5432/myvidcraft
+      MYVIDCRAFT_REDIS_URL: redis://redis:6379/0
+      MYVIDCRAFT_ARTIFACTS_DIR: /app/data/artifacts
+      # Passed through from the host shell or a .env file. Absent keys are not
+      # fatal: the script engine falls back to templates, but the voice stage
+      # will fail without a TTS key — see .env.example.
+      MYVIDCRAFT_ANTHROPIC_API_KEY: ${MYVIDCRAFT_ANTHROPIC_API_KEY:-}
+      MYVIDCRAFT_OPENAI_API_KEY: ${MYVIDCRAFT_OPENAI_API_KEY:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: .
+    command:
+      ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment: *app_env
+    ports:
+      - "8000:8000"
+    volumes:
+      - artifacts:/app/data/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request;urllib.request.urlopen('http://localhost:8000/health').read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["celery", "-A", "workers.orchestrator.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+    environment: *app_env
+    volumes:
+      # Same volume as the API: the worker writes artifacts and the API serves
+      # them, so they must agree on the path. This is the seam that object
+      # storage replaces in Gate 2 — until then, both must run on one host.
+      - artifacts:/app/data/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  artifacts:
