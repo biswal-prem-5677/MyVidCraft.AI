@@ -56,6 +56,46 @@ class RunCancelled(Exception):
     """Raised to unwind a run that the user cancelled mid-flight."""
 
 
+# Retry only what a second attempt could plausibly fix.
+#
+# In practice that means filesystem I/O. Every stage writes artifacts through
+# `write_json`/`wave`/the TTS engine, and those are the calls that fail for
+# reasons a retry clears: a disk that is momentarily full, a virus scanner
+# holding a freshly written WAV open (PermissionError on Windows), a path that
+# is briefly unavailable. All surface as OSError.
+#
+# Worth being precise about what this does NOT cover, because the obvious
+# guesses are wrong:
+#   - SQLite lock contention raises sqlalchemy.exc.OperationalError, which is
+#     not an OSError. It is not retried here.
+#   - FFmpeg failures never reach us: `wav_to_mp3` and `mux_episode` catch their
+#     own OSError and return False, by design — a missing codec must not fail a
+#     run.
+#   - A SAPI/COM fault raises pywintypes.com_error, which derives straight from
+#     Exception. `text_to_wav` is where a retry for that would have to live.
+#
+# Deliberately NOT `Exception`: a schema violation fails identically on every
+# attempt, so retrying turns an instant, legible failure into a slow one.
+# RunCancelled is not an OSError either, so cancelling a run unwinds immediately
+# instead of being retried first.
+#
+# FileNotFoundError is an OSError and so is technically in scope, which means a
+# genuinely absent input costs two pointless attempts (~6s) before it reports.
+# That is accepted rather than special-cased: the bound is small, and carving
+# exceptions out of OSError would also drop the transient cases above.
+#
+# Safe because artifact registration is idempotent — see `_create_artifact`.
+RETRYABLE_ERRORS = (OSError,)
+
+TASK_RETRY_POLICY = {
+    "autoretry_for": RETRYABLE_ERRORS,
+    "retry_backoff": 2,        # 2s, then 4s
+    "retry_backoff_max": 30,
+    "retry_jitter": True,      # spread retries when several turns fail at once
+    "max_retries": 2,
+}
+
+
 def _utcnow() -> datetime:
     # datetime.utcnow() is deprecated in 3.12+. Stored naive for column compatibility.
     return datetime.now(timezone.utc).replace(tzinfo=None)
@@ -77,10 +117,32 @@ def _update_run(run_id: str, **updates):
 
 
 def _create_artifact(run_id: str, type_: str, path: str, metadata: dict | None = None):
+    """
+    Register an artifact, replacing any previous row describing the same file.
+
+    Registration has to be idempotent because a stage can run more than once for
+    one run — a retry after a transient failure, or a rerun. Inserting blindly
+    left two rows pointing at one file, and the UI then showed the artifact twice
+    with no way to tell which row was current. Keying on (run, type, path) makes
+    re-running a stage converge instead of accumulate.
+
+    Per-turn WAVs are unaffected: each turn writes its own path, so they are
+    distinct rows rather than replacements of one another.
+    """
     metadata = metadata or {}
     with _session() as s:
-        a = Artifact(run_id=run_id, type=type_, path=path, metadata_json=metadata)
-        s.add(a)
+        stmt = select(Artifact).where(
+            Artifact.run_id == run_id,
+            Artifact.type == type_,
+            Artifact.path == path,
+        )
+        existing = s.exec(stmt).first()
+        if existing is not None:
+            existing.metadata_json = metadata
+            existing.created_at = _utcnow()
+            s.add(existing)
+        else:
+            s.add(Artifact(run_id=run_id, type=type_, path=path, metadata_json=metadata))
         s.commit()
 
 
@@ -212,6 +274,29 @@ def _end_stage(run_id: str, stage: Stage) -> None:
     _update_run(run_id, progress=progress_at(stage))
 
 
+def _report_progress(run_id: str, stage: Stage, fraction: float) -> None:
+    """
+    Advance the bar inside a long stage, and say so on the event stream.
+
+    The two long stages used to move the bar with a bare `_update_run`, so a
+    client watching the websocket saw nothing at all between `stage.started` and
+    `stage.completed` — on the voice stage that is the multi-minute stretch where
+    a user most wants to know something is happening. `progress_at` clamps, so a
+    stage that miscounts its own items cannot push the bar into the next one.
+    """
+    value = progress_at(stage, fraction)
+    _update_run(run_id, progress=value)
+    publish(
+        run_id,
+        {
+            "type": "stage.progress",
+            "stage": stage.value,
+            "progress": value,
+            "fraction": round(max(0.0, min(1.0, fraction)), 4),
+        },
+    )
+
+
 @celery_app.task(name="run.mark_running")
 def mark_running(run_id: str):
     _guard(run_id)
@@ -227,7 +312,7 @@ def mark_running(run_id: str):
     return run_id
 
 
-@celery_app.task(name="brain.generate_strategy")
+@celery_app.task(name="brain.generate_strategy", **TASK_RETRY_POLICY)
 def brain_generate_strategy(run_id: str):
     _guard(run_id)
     _begin_stage(run_id, Stage.brain_strategy)
@@ -249,7 +334,7 @@ def brain_generate_strategy(run_id: str):
     return run_id
 
 
-@celery_app.task(name="dialogue.generate_script")
+@celery_app.task(name="dialogue.generate_script", **TASK_RETRY_POLICY)
 def dialogue_generate_script(run_id: str):
     _guard(run_id)
     _begin_stage(run_id, Stage.dialogue_script)
@@ -336,7 +421,7 @@ def prepare_voice_rerun(run_id: str):
     return run_id
 
 
-@celery_app.task(name="voice.generate_turn_audio")
+@celery_app.task(name="voice.generate_turn_audio", **TASK_RETRY_POLICY)
 def voice_generate_turn_audio(run_id: str):
     _guard(run_id)
     _begin_stage(run_id, Stage.voice_turns)
@@ -413,7 +498,7 @@ def voice_generate_turn_audio(run_id: str):
                 "pace_wpm": t.get("pace_wpm"),
             },
         )
-        _update_run(run_id, progress=progress_at(Stage.voice_turns, (i + 1) / total))
+        _report_progress(run_id, Stage.voice_turns, (i + 1) / total)
 
     if not out_paths:
         raise RuntimeError("TTS produced no audio")
@@ -439,7 +524,7 @@ def voice_generate_turn_audio(run_id: str):
     return run_id
 
 
-@celery_app.task(name="audio.stitch_master")
+@celery_app.task(name="audio.stitch_master", **TASK_RETRY_POLICY)
 def audio_stitch_master(run_id: str):
     _guard(run_id)
     _begin_stage(run_id, Stage.audio_master)
@@ -573,7 +658,7 @@ def prepare_video_rerun(run_id: str):
     return run_id
 
 
-@celery_app.task(name="video.compose_episode")
+@celery_app.task(name="video.compose_episode", **TASK_RETRY_POLICY)
 def video_compose_episode(run_id: str):
     _guard(run_id)
     _begin_stage(run_id, Stage.video_compose)
@@ -616,7 +701,7 @@ def video_compose_episode(run_id: str):
         )
         publish(run_id, {"type": "artifact.created", "artifact_type": "episode_captions_srt", "path": stored})
 
-    _update_run(run_id, progress=progress_at(Stage.video_compose, 0.3))
+    _report_progress(run_id, Stage.video_compose, 0.3)
     _guard(run_id)
 
     from apps.api.settings import settings

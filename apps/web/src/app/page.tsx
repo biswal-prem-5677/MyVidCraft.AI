@@ -51,7 +51,18 @@ export default function HomePage() {
 
   const wsRef = useRef<WebSocket | null>(null);
 
-  const progressPct = useMemo(() => Math.round(((run?.progress ?? 0) * 100 + Number.EPSILON) * 1) / 1, [run?.progress]);
+  // Progress reaches the bar two ways: a full run refetch at each stage
+  // boundary, and `stage.progress` events published from inside a long stage.
+  // They race — a refetch issued on `stage.started` can resolve after several
+  // progress events and would snap the bar backwards — so the bar shows
+  // whichever source has got furthest. `connectWs` clears this, which is what
+  // still lets a rerun legitimately restart the bar behind where it finished.
+  const [liveProgress, setLiveProgress] = useState(0);
+
+  const progressPct = useMemo(
+    () => Math.round((Math.max(run?.progress ?? 0, liveProgress) * 100 + Number.EPSILON) * 1) / 1,
+    [run?.progress, liveProgress]
+  );
   const isTerminal = useMemo(() => TERMINAL_STATUSES.includes(run?.status ?? ""), [run?.status]);
   const canRevoice = useMemo(
     () => Boolean(run?.id) && isTerminal && Object.keys(castVoices).length > 0,
@@ -159,12 +170,18 @@ export default function HomePage() {
 
   function connectWs(runId: string) {
     wsRef.current?.close();
+    setLiveProgress(0);
     const wsUrl = API_BASE.replace(/^http/, "ws") + `/ws/runs/${runId}`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     ws.onmessage = (msg) => {
       const ev = JSON.parse(msg.data);
       setEvents((prev) => [ev, ...prev].slice(0, 80));
+      // Moves the bar inside a stage without a refetch — the voice stage spends
+      // minutes here, and this is the only thing that shows it is alive.
+      if (ev?.type === "stage.progress" && typeof ev.progress === "number") {
+        setLiveProgress((prev) => Math.max(prev, ev.progress));
+      }
       if (ev?.type === "run.completed" || ev?.type === "run.failed") {
         refreshRun(runId);
         refreshArtifacts(runId);
