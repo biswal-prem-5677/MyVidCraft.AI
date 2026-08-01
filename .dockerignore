@@ -16,8 +16,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# The web app is not containerised yet — it is a Next.js frontend that will get
-# its own image when Gate 2 adds auth and a real UI.
+# The web app has its own image (`apps/web/Dockerfile`, built with `apps/web` as
+# its context and governed by the `.dockerignore` in there). It is excluded here
+# because this context builds the *Python* image, which shares neither a runtime
+# nor a dependency set with it.
 apps/web/
 node_modules/
 .next/

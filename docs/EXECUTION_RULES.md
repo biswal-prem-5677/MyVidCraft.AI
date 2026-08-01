@@ -121,8 +121,9 @@ composed video, async with live progress.
 | Deliverable | Why | State |
 |---|---|---|
 | HTTP TTS backend registered via `SpeechEngine` | Removes the Windows/COM lock | ✅ `openai_tts.py` |
+| Free TTS backend for the listen test | The go/no-go needed a funded account nobody had | ✅ `edge_tts.py`, opt-in |
 | `pyttsx3` + `pywin32` deleted from requirements | The blocker itself | ✅ deleted |
-| Dockerfile + docker-compose (api, worker, redis, postgres) | No deploy artifacts existed | ✅ written, **build unverified locally** |
+| Dockerfile + docker-compose (api, worker, web, redis, postgres) | No deploy artifacts existed | ✅ written, **build unverified locally** |
 | Postgres + **Alembic** migrations | SQLite is single-writer; no migrations = data loss on any schema change | ✅ + drift test |
 | GitHub Actions CI running the suite | The suite ran only when remembered | ✅ 3 jobs |
 
@@ -132,7 +133,16 @@ composed video, async with live progress.
 |---|---|
 | Two runs execute concurrently without locking | ✅ verified — `tests/test_concurrent_runs.py` |
 | CI green on push | ⏳ unverified — repo is private, no `gh` on this machine |
-| `docker compose up` on Linux produces a complete episode | ⏳ unverified — Docker not installed here; CI builds and boots the image, but does not render an episode |
+| `docker compose up` on Linux produces a complete episode | ⏳ unverified — Docker not installed here; CI builds and boots both images, but does not render an episode |
+
+**The go/no-go is now answerable without money.** It previously required an
+OpenAI account with a payment method, which stalled the gate. `edge_tts.py`
+registers the Edge read-aloud service as a second `SpeechEngine`: no key, no
+account, and the same neural voices Edge uses for read-aloud — at least the
+equal of the paid default, so a "yes" here cannot be a false positive from a
+cheaper engine. It is **not** the default and must not be billed on: the
+endpoint is undocumented and rate-limits without notice. Switching to the paid
+engine is one setting, which is what the protocol seam was built for.
 
 **Found while doing this work:** a real concurrency crash, not a test artifact.
 `@celery_app.task` returns a `PromiseProxy` that resolves lazily and not
@@ -256,18 +266,24 @@ not spent.
 | Gate | State | Blocking |
 |---|---|---|
 | 0 — Baseline | ✅ Complete | — |
-| **1 — Deployable** | 🔵 **Code complete** | The listen test — needs a TTS key and a Docker host |
+| **1 — Deployable** | 🔵 **Code complete** | The listen test — now runnable for free; and a Docker host |
 | 2 — Usable by a stranger | ⚪ Blocked | Gate 1 go/no-go |
 | 3 — Worth paying for | ⚪ Blocked | Gate 2 |
 | 4 — Expand (clips) | ⚪ Blocked | Gate 3 |
 
-**To close Gate 1** (needs a machine with Docker and an API key — neither is
-available to the agent):
+**To close Gate 1** (the listen test no longer needs a paid key; the container
+check still needs Docker, which is not installed on this machine):
 
 ```bash
-export MYVIDCRAFT_OPENAI_API_KEY=sk-...      # required; no offline fallback
+# Free path — no account, no card. FFmpeg required for this engine.
+export MYVIDCRAFT_TTS_ENGINE=edge
+# Paid path instead:
+#   export MYVIDCRAFT_TTS_ENGINE=openai
+#   export MYVIDCRAFT_OPENAI_API_KEY=sk-...
 export MYVIDCRAFT_ANTHROPIC_API_KEY=sk-...   # optional; templates without it
-docker compose up --build
+
+docker compose up --build        # UI on :3000, API on :8000
+# or locally: uvicorn apps.api.main:app --port 8000, then npm run dev in apps/web
 
 curl -X POST localhost:8000/projects -H 'content-type: application/json' \
   -d '{"name":"Test","niche":"AI productivity","brand_profile":{"tone":"confident"},"defaults":{}}'
@@ -289,7 +305,10 @@ Then answer the go/no-go: **would you publish that audio under your own name?**
 **Open decisions** (recorded rather than assumed — see `ENGINEERING_REVIEW.md`
 Appendix A):
 
-1. Which TTS vendor, and is there budget for paid API calls?
+1. ~~Which TTS vendor, and is there budget for paid API calls?~~ **Answered
+   2026-08-01:** no budget for now. Verification runs on the free `edge` engine;
+   the paid `openai` engine stays the default and the shipping target, and the
+   switch is one setting whenever a key exists.
 2. Is lip sync negotiable, or a hard product requirement?
 3. Deployment target — Linux/container assumed; confirm.
 
@@ -300,3 +319,5 @@ Appendix A):
 | Date | Change | Reason |
 |---|---|---|
 | 2026-08-01 | Created | Replace phase-ordering with gate-ordering, so scope is bounded by user-reachability rather than by feature ambition |
+| 2026-08-01 | Added a second, free speech engine (`edge`) | The Gate 1 go/no-go required a funded API account, which blocked the gate indefinitely. R6 says buy commodities — but a commodity you cannot afford stalls the ladder, and the seam makes a second registration nearly free. Not the default, and explicitly not billable. |
+| 2026-08-01 | Added the web UI to the container stack | Compose brought up an API with no way to reach it, which fails R3: a capability a stranger with a browser cannot use is not built. |

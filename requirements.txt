@@ -31,3 +31,13 @@ anthropic>=0.120.0
 # engines are Anthropic. This replaced pyttsx3/pywin32, which bound the whole
 # pipeline to Windows COM and serialised synthesis behind a process-wide lock.
 openai>=1.60.0
+
+# The free speech backend (MYVIDCRAFT_TTS_ENGINE=edge). Not the default and not
+# what this ships on — it speaks to an endpoint Microsoft never documented — but
+# it needs no key, which is what lets Gate 1's "listen to it" test be answered
+# without a funded account.
+#
+# Deliberately unpinned at the top: this library exists in a permanent race with
+# the service's handshake, and every 403 wave so far has been fixed by taking a
+# newer release. Pinning it would convert an outage into a code change.
+edge-tts>=7.2.0

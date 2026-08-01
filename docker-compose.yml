@@ -5,7 +5,7 @@
 # Windows COM and would have failed inside any container.
 #
 #   docker compose up --build
-#   -> API on :8000, web-less; POST a run and watch /ws/runs/{id}
+#   -> UI on :3000, API on :8000. Open the UI and start a run.
 #
 # Postgres rather than SQLite here deliberately. SQLite is fine for tests and a
 # single developer, but it is single-writer, so two concurrent runs serialise on
@@ -53,6 +53,9 @@ services:
       # will fail without a TTS key — see .env.example.
       MYVIDCRAFT_ANTHROPIC_API_KEY: ${MYVIDCRAFT_ANTHROPIC_API_KEY:-}
       MYVIDCRAFT_OPENAI_API_KEY: ${MYVIDCRAFT_OPENAI_API_KEY:-}
+      # `openai` (paid, needs the key above) or `edge` (free, no key, but then
+      # the voice stage requires the FFmpeg this image already ships).
+      MYVIDCRAFT_TTS_ENGINE: ${MYVIDCRAFT_TTS_ENGINE:-openai}
     depends_on:
       db:
         condition: service_healthy
@@ -100,6 +103,28 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Without this the stack is an API and no way to reach it, which fails R3 in
+  # EXECUTION_RULES.md: a capability a stranger with a browser cannot use is not
+  # built. It is a separate image because the frontend shares no runtime with
+  # the Python services.
+  web:
+    build:
+      context: ./apps/web
+      args:
+        # Resolved by the browser on the host, not on the compose network, so
+        # this is `localhost` rather than the `api` service name. See the note
+        # in apps/web/Dockerfile.
+        NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    # `depends_on` without a condition only orders startup; the UI tolerates a
+    # not-yet-ready API because every call is client-side and retried by the
+    # user. Waiting on the API's healthcheck would serialise the boot for no
+    # benefit.
+    depends_on:
+      - api
     restart: unless-stopped
 
 volumes:

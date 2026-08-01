@@ -79,4 +79,17 @@ def _openai_factory() -> SpeechEngine:
     return OpenAITTSEngine()
 
 
+def _edge_factory() -> SpeechEngine:
+    from .edge_tts import EdgeTTSEngine
+
+    return EdgeTTSEngine()
+
+
 register(DEFAULT_ENGINE, _openai_factory)
+
+# Free, keyless, and not the default. It renders the same neural voices Edge
+# uses for read-aloud, which makes it the right engine for answering Gate 1's
+# "would you publish this?" without a funded account — but it speaks to an
+# undocumented endpoint that rate-limits without notice, so it is opt-in via
+# MYVIDCRAFT_TTS_ENGINE=edge rather than something a paying user could land on.
+register("edge", _edge_factory)

@@ -1,0 +1,18 @@
+# Scoped to this directory, because the web service builds with `apps/web` as
+# its context. The repository-root `.dockerignore` does not apply here — Docker
+# reads the one at the root of the context being sent.
+
+# Installed fresh by `npm ci` in the deps stage. Copying the host's tree in
+# would both bloat the context and risk shipping platform-specific binaries
+# (sharp ships different native builds per OS).
+node_modules/
+
+# Build output from a host-side `npm run dev` / `npm run build`.
+.next/
+out/
+*.tsbuildinfo
+
+.env
+.env.*
+Dockerfile
+.dockerignore

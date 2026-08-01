@@ -149,6 +149,48 @@ jobs:
           print('health ok:', h)
           "
 
+      # The web image is developed on a machine with no Docker, so this job is
+      # the only place it is ever built. Without this step the compose stack
+      # would claim a UI that had never once been compiled in a container.
+      - name: Build the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/web
+          load: true
+          tags: myvidcraft-web:ci
+          build-args: NEXT_PUBLIC_API_BASE=http://localhost:8000
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Web image boots and serves the page
+        run: |
+          docker run -d --name web -p 3000:3000 myvidcraft-web:ci
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:3000 >/dev/null && break
+            sleep 2
+          done
+          curl -fsS http://localhost:3000 | tee /tmp/page.html >/dev/null
+          # A 200 alone would pass on Next's error page, so assert on content
+          # the app actually renders.
+          grep -q "Run builder" /tmp/page.html || { echo "::error::UI did not render"; exit 1; }
+          # The API base is inlined at build time; if the arg were ignored the
+          # bundle would carry a different origin and every call would fail.
+          grep -q "localhost:8000" /tmp/page.html || { echo "::error::API base not baked into the bundle"; exit 1; }
+          echo "web ok"
+
+      - name: Compose file is valid and complete
+        # `config` parses, resolves and interpolates the whole file, so a typo
+        # in a service or a bad anchor fails here rather than on a user's first
+        # `docker compose up`.
+        run: |
+          docker compose config >/tmp/compose.yml
+          for svc in db redis migrate api worker web; do
+            docker compose config --services | grep -qx "$svc" || { echo "::error::service $svc missing"; exit 1; }
+          done
+          echo "compose ok"
+
       - name: Container logs on failure
         if: failure()
-        run: docker logs api || true
+        run: |
+          docker logs api || true
+          docker logs web || true

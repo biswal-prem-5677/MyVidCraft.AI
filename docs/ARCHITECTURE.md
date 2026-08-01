@@ -90,7 +90,7 @@ protocol and is resolved by name. Where it does not, it is a plain module.
 
 | Seam | Protocol | Registry | Implementations |
 |---|---|---|---|
-| Speech synthesis | `workers/media/tts/base.py` | `workers/media/tts/registry.py` | `openai` (cloud HTTP) |
+| Speech synthesis | `workers/media/tts/base.py` | `workers/media/tts/registry.py` | `openai` (cloud HTTP, default) · `edge` (free, opt-in) |
 | Video rendering | `workers/media/video/base.py` | `workers/media/video/registry.py` | `slideshow` (pure-Python compositor) |
 | LLM | `workers/orchestrator/llm.py` — `generate_structured()` | — | Anthropic |
 
@@ -106,6 +106,21 @@ protocol and is resolved by name. Where it does not, it is a plain module.
 Nothing in the orchestrator changes. `tests/test_tts_registry.py` and
 `tests/test_pipeline_integration.py` both run against fakes, which is the
 seam's second payoff: the end-to-end test does not need a real speech engine.
+
+**The one contract a speech engine must honour** is the WAV shape:
+`stitch_turns_to_episode` refuses to concatenate turns whose channel count,
+sample width or frame rate disagree. An engine must be internally consistent;
+matching another engine is optional but worth doing, and both current backends
+emit 24 kHz mono 16-bit so a run's audio does not change character when the
+engine does. `edge_tts.py` shows the case where the API's format is not
+negotiable — the service emits MP3 only, so the engine transcodes via
+`workers/media/ffmpeg.py::transcode_to_wav` rather than pushing the problem into
+the stitcher.
+
+That helper raises where `wav_to_mp3` returns `False`, and the asymmetry is the
+point: a missing MP3 export costs one artifact, but a turn that fails to convert
+is a hole in the episode. Degradation is correct for optional outputs and wrong
+for required ones.
 
 **Adding a video renderer** (this is how MuseTalk/LivePortrait land):
 
