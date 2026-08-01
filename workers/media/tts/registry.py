@@ -17,7 +17,7 @@ from .base import SpeechEngine
 
 log = logging.getLogger(__name__)
 
-DEFAULT_ENGINE = "pyttsx3"
+DEFAULT_ENGINE = "openai"
 
 _FACTORIES: dict[str, Callable[[], SpeechEngine]] = {}
 _instances: dict[str, SpeechEngine] = {}
@@ -73,10 +73,10 @@ def reset() -> None:
         _instances.clear()
 
 
-def _pyttsx3_factory() -> SpeechEngine:
-    from .pyttsx3_tts import Pyttsx3Engine
+def _openai_factory() -> SpeechEngine:
+    from .openai_tts import OpenAITTSEngine
 
-    return Pyttsx3Engine()
+    return OpenAITTSEngine()
 
 
-register(DEFAULT_ENGINE, _pyttsx3_factory)
+register(DEFAULT_ENGINE, _openai_factory)

@@ -90,7 +90,7 @@ protocol and is resolved by name. Where it does not, it is a plain module.
 
 | Seam | Protocol | Registry | Implementations |
 |---|---|---|---|
-| Speech synthesis | `workers/media/tts/base.py` | `workers/media/tts/registry.py` | `pyttsx3` (system/SAPI) |
+| Speech synthesis | `workers/media/tts/base.py` | `workers/media/tts/registry.py` | `openai` (cloud HTTP) |
 | Video rendering | `workers/media/video/base.py` | `workers/media/video/registry.py` | `slideshow` (pure-Python compositor) |
 | LLM | `workers/orchestrator/llm.py` — `generate_structured()` | — | Anthropic |
 

@@ -206,7 +206,7 @@ MyVidCraft.ai/
       tasks.py           #   task graph + in-process fallback
     media/
       ffmpeg.py          #   one place that locates the binary; optional everywhere
-      tts/               #   SpeechEngine protocol + registry + pyttsx3 impl
+      tts/               #   SpeechEngine protocol + registry + cloud HTTP impl
       audio/             #   stitch, normalize, encode
       video/             #   VideoRenderer protocol + registry + slideshow compositor
         raster.py        #     software rasterizer (no imaging dependency)

@@ -23,7 +23,19 @@ class Settings(BaseSettings):
     # --- Speech synthesis ---
     # Name registered in `workers.media.tts.registry`. An unknown name raises at
     # the first synthesis attempt rather than silently using a default.
-    tts_engine: str = "pyttsx3"
+    #
+    # The default is a cloud engine rather than a local one because the local
+    # option (SAPI) could not be deployed: Windows-only, and serialised behind a
+    # process-wide lock. An HTTP backend has neither property.
+    tts_engine: str = "openai"
+    openai_api_key: str = ""
+    # tts-1 is the model that honours `speed`, which is how `pace_wpm` from the
+    # dialogue schema reaches the audio. tts-1-hd trades cost for fidelity.
+    tts_model: str = "tts-1"
+    # Retries belong to the SDK so a blip re-sends one turn instead of re-running
+    # the whole voice stage — see the note in `openai_tts.py`.
+    tts_max_retries: int = 2
+    tts_timeout_s: float = 60.0
 
     # --- Video composition ---
     # Name registered in `workers.media.video.registry`. The default compositor
